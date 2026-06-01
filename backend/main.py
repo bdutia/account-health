@@ -1,0 +1,85 @@
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+
+from backend.data_service import (
+    get_account_dashboard_data,
+    get_summary_dashboard_data,
+    get_summary_dashboard_debug,
+)
+
+load_dotenv('.env.server')
+
+app = FastAPI(title='Account Health API')
+frontend_origin = os.getenv('FRONTEND_ORIGIN', 'http://localhost:5173')
+
+
+def normalize_base_path(raw_value: str | None) -> str:
+    if not raw_value or raw_value.strip() in {'', '/'}:
+        return ''
+    value = raw_value.strip()
+    if not value.startswith('/'):
+        value = f'/{value}'
+    return value.rstrip('/')
+
+
+APP_BASE_PATH = normalize_base_path(os.getenv('APP_BASE_PATH'))
+API_PREFIX = f'{APP_BASE_PATH}/api' if APP_BASE_PATH else '/api'
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[frontend_origin],
+    allow_credentials=True,
+    allow_methods=['*'],
+    allow_headers=['*'],
+)
+
+
+@app.get(f'{API_PREFIX}/health')
+def health() -> dict[str, object]:
+    return {'ok': True, 'service': 'account-health-api-python'}
+
+
+@app.get(f'{API_PREFIX}/dashboard/summary')
+def summary_dashboard() -> dict[str, object]:
+    return get_summary_dashboard_data()
+
+
+@app.get(f'{API_PREFIX}/dashboard/debug')
+def debug_dashboard() -> dict[str, object]:
+    return get_summary_dashboard_debug()
+
+
+@app.get(f'{API_PREFIX}/dashboard/account/{{account_id}}')
+def account_dashboard(account_id: str) -> dict[str, object]:
+    result = get_account_dashboard_data(account_id)
+    if result.get('data') is None:
+        raise HTTPException(status_code=404, detail='Account not found')
+    return result
+
+
+DIST_DIR = Path(__file__).resolve().parent.parent / 'dist'
+ASSETS_DIR = DIST_DIR / 'assets'
+
+if DIST_DIR.exists():
+    if ASSETS_DIR.exists():
+        assets_mount = f'{APP_BASE_PATH}/assets' if APP_BASE_PATH else '/assets'
+        app.mount(assets_mount, StaticFiles(directory=ASSETS_DIR), name='assets')
+
+    if APP_BASE_PATH:
+        @app.get(APP_BASE_PATH)
+        def serve_prefixed_root() -> FileResponse:
+            return FileResponse(DIST_DIR / 'index.html')
+
+
+        @app.get(f'{APP_BASE_PATH}/{{full_path:path}}')
+        def serve_prefixed_spa(full_path: str) -> FileResponse:
+            candidate = DIST_DIR / full_path
+            if candidate.exists() and candidate.is_file():
+                return FileResponse(candidate)
+            return FileResponse(DIST_DIR / 'index.html')

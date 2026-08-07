@@ -41,6 +41,29 @@ export interface DetailPillar {
   items: PanelItem[]
 }
 
+export interface HostnameCoverageTotals {
+  covered: number
+  notCovered: number
+  unknown: number
+  total: number
+}
+
+export interface HostnameCoverageRow {
+  hostname: string
+  status: 'covered' | 'not_covered' | 'unknown'
+  securityConfiguration?: string
+  hasMatchTarget: boolean
+  securityPolicies: string[]
+}
+
+export interface AccountHostnameCoverage {
+  accountKey: string
+  accountName: string
+  accountId: string
+  totals: HostnameCoverageTotals
+  hostnames: HostnameCoverageRow[]
+}
+
 export interface AccountDetail {
   accountId: string
   name: string

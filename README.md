@@ -46,6 +46,14 @@ To use the backend API (recommended), copy `.env.example` to `.env` and set:
 
 Then copy `.env.server.example` to `.env.server` and configure backend credentials.
 
+For Akamai hostname coverage PoC, also set in `.env.server`:
+
+- `EDGE_RC_SECTION` (for example `default`)
+- `EDGE_RC_PATH` (optional, defaults to `~/.edgerc`)
+- `AKAMAI_ACCOUNT_MAP_PATH` (defaults to `backend/account_id_map.json`)
+
+Create `backend/account_id_map.json` from `backend/account_id_map.example.json` and map your account key to Akamai account ID.
+
 For prefixed cloud hosting (example `/account-health`), set:
 
 - `.env`: `VITE_APP_BASE_PATH=/account-health/`
@@ -62,6 +70,10 @@ App routes:
 
 - `/` summary page
 - `/account/:accountId` account detail page
+
+PoC backend route:
+
+- `/api/dashboard/account/{accountKey}/hostname-coverage` returns dynamic covered/not-covered hostname data from Akamai APIs.
 
 ## Build
 

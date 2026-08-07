@@ -1,5 +1,6 @@
 import { accountDetails, accounts, summaryMetrics, summaryPanels } from '../data/mockData'
 import type {
+  AccountHostnameCoverage,
   AccountDetail,
   AccountSummaryRow,
   DetailPillar,
@@ -17,6 +18,12 @@ type GoogleSheetValues = {
 type BackendResponse<T> = {
   source: 'mock' | 'google'
   data: T
+}
+
+type HostnameCoverageBackendResponse = {
+  source: 'akamai'
+  data: AccountHostnameCoverage | null
+  error?: string
 }
 
 const DATA_MODE = (import.meta.env.VITE_DASHBOARD_DATA_MODE ?? 'mock').toLowerCase()
@@ -329,6 +336,16 @@ async function fetchDetailFromBackend(accountId: string): Promise<AccountDetail 
   return payload.data
 }
 
+async function fetchHostnameCoverageFromBackend(accountKey: string): Promise<AccountHostnameCoverage | null> {
+  const response = await fetch(`${API_BASE_URL}/api/dashboard/account/${accountKey}/hostname-coverage`)
+  if (!response.ok) {
+    return null
+  }
+
+  const payload = (await response.json()) as HostnameCoverageBackendResponse
+  return payload.data
+}
+
 export async function fetchSummaryDashboardData(): Promise<SummaryDashboardData> {
   if (DATA_MODE === 'backend') {
     try {
@@ -382,5 +399,17 @@ export async function fetchAccountDashboardData(accountId: string): Promise<Acco
     return (await fetchDetailFromGoogle(accountId)) ?? accountDetails[accountId]
   } catch {
     return accountDetails[accountId]
+  }
+}
+
+export async function fetchAccountHostnameCoverage(accountKey: string): Promise<AccountHostnameCoverage | null> {
+  if (DATA_MODE !== 'backend') {
+    return null
+  }
+
+  try {
+    return await fetchHostnameCoverageFromBackend(accountKey)
+  } catch {
+    return null
   }
 }

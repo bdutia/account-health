@@ -3,21 +3,36 @@ import { Link, useParams } from 'react-router-dom'
 import { DashboardLayout } from '../components/DashboardLayout'
 import { MetricTiles } from '../components/MetricTiles'
 import { toneDotStyles, toneTextStyles } from '../components/tone'
-import { fetchAccountDashboardData } from '../services/googleData'
-import type { AccountDetail } from '../types/dashboard'
+import { fetchAccountDashboardData, fetchAccountHostnameCoverage } from '../services/googleData'
+import type { AccountDetail, AccountHostnameCoverage } from '../types/dashboard'
+
+function hostnameStatusStyles(status: 'covered' | 'not_covered' | 'unknown'): string {
+  if (status === 'covered') {
+    return 'bg-emerald-100 text-emerald-700'
+  }
+  if (status === 'not_covered') {
+    return 'bg-rose-100 text-rose-700'
+  }
+  return 'bg-slate-200 text-slate-700'
+}
 
 export function AccountDetailPage() {
   const { accountId = '' } = useParams()
   const [account, setAccount] = useState<AccountDetail | null>(null)
+  const [hostnameCoverage, setHostnameCoverage] = useState<AccountHostnameCoverage | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
     let isMounted = true
 
     async function loadData() {
-      const next = await fetchAccountDashboardData(accountId)
+      const [next, coverage] = await Promise.all([
+        fetchAccountDashboardData(accountId),
+        fetchAccountHostnameCoverage(accountId),
+      ])
       if (isMounted) {
         setAccount(next ?? null)
+        setHostnameCoverage(coverage)
         setIsLoading(false)
       }
     }
@@ -97,6 +112,62 @@ export function AccountDetailPage() {
               </ul>
             </article>
           ))}
+        </section>
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-card">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-xl font-bold text-slate-800">Akamai Hostname Coverage</h2>
+            {hostnameCoverage ? (
+              <div className="flex flex-wrap gap-2 text-xs font-semibold text-slate-700">
+                <span className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-700">
+                  Covered: {hostnameCoverage.totals.covered}
+                </span>
+                <span className="rounded-full bg-rose-100 px-3 py-1 text-rose-700">
+                  Not Covered: {hostnameCoverage.totals.notCovered}
+                </span>
+                <span className="rounded-full bg-slate-200 px-3 py-1 text-slate-700">
+                  Unknown: {hostnameCoverage.totals.unknown}
+                </span>
+                <span className="rounded-full bg-slate-800 px-3 py-1 text-white">
+                  Total: {hostnameCoverage.totals.total}
+                </span>
+              </div>
+            ) : null}
+          </div>
+
+          {!hostnameCoverage ? (
+            <p className="text-sm text-slate-600">
+              Hostname coverage is unavailable for this account or this environment is not using backend mode.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full border-separate border-spacing-y-2 text-sm">
+                <thead>
+                  <tr className="text-left text-slate-500">
+                    <th className="px-2 py-1 font-semibold">Hostname</th>
+                    <th className="px-2 py-1 font-semibold">Status</th>
+                    <th className="px-2 py-1 font-semibold">Security Config</th>
+                    <th className="px-2 py-1 font-semibold">Policies</th>
+                    <th className="px-2 py-1 font-semibold">Match Target</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {hostnameCoverage.hostnames.map((row) => (
+                    <tr key={row.hostname} className="rounded-lg bg-slate-50 text-slate-700">
+                      <td className="px-2 py-2 font-semibold">{row.hostname || '-'}</td>
+                      <td className="px-2 py-2">
+                        <span className={`rounded-full px-2 py-1 text-xs font-semibold ${hostnameStatusStyles(row.status)}`}>
+                          {row.status}
+                        </span>
+                      </td>
+                      <td className="px-2 py-2">{row.securityConfiguration || '-'}</td>
+                      <td className="px-2 py-2">{row.securityPolicies.length ? row.securityPolicies.join(', ') : '-'}</td>
+                      <td className="px-2 py-2">{row.hasMatchTarget ? 'Yes' : 'No'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
       </div>
     </DashboardLayout>

@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.data_service import (
+    get_account_hostname_coverage,
     get_account_dashboard_data,
     get_summary_dashboard_data,
     get_summary_dashboard_debug,
@@ -60,6 +61,17 @@ def account_dashboard(account_id: str) -> dict[str, object]:
     result = get_account_dashboard_data(account_id)
     if result.get('data') is None:
         raise HTTPException(status_code=404, detail='Account not found')
+    return result
+
+
+@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/hostname-coverage')
+def account_hostname_coverage(account_key: str) -> dict[str, object]:
+    result = get_account_hostname_coverage(account_key)
+    if result.get('data') is None:
+        error_message = str(result.get('error') or 'Hostname coverage unavailable')
+        if error_message.startswith('No mapping found') or error_message.startswith('No Akamai account matched'):
+            raise HTTPException(status_code=404, detail=error_message)
+        raise HTTPException(status_code=500, detail=error_message)
     return result
 
 

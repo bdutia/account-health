@@ -1,10 +1,199 @@
 import os
+import json
+from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin
 
+import requests
+from akamai.edgegrid import EdgeGridAuth, EdgeRc
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from ratelimit import limits, sleep_and_retry
 
 from backend.mock_data import account_details, accounts, summary_metrics, summary_panels
+
+
+def get_akamai_config() -> dict[str, str]:
+    return {
+        "edge_rc_path": os.getenv("EDGE_RC_PATH") or str(Path.home() / ".edgerc"),
+        "edge_rc_section": os.getenv("EDGE_RC_SECTION") or "default",
+        "account_map_path": os.getenv("AKAMAI_ACCOUNT_MAP_PATH") or "backend/account_id_map.json",
+    }
+
+
+def _resolve_account_map_path(account_map_path: str) -> Path:
+    path = Path(account_map_path).expanduser()
+    if path.is_absolute():
+        return path
+    return (Path(__file__).resolve().parent.parent / path).resolve()
+
+
+def load_account_id_map() -> dict[str, dict[str, str]]:
+    cfg = get_akamai_config()
+    path = _resolve_account_map_path(cfg["account_map_path"])
+    if not path.exists():
+        raise FileNotFoundError(f"Akamai account map file not found: {path}")
+
+    payload = json.loads(path.read_text())
+    if not isinstance(payload, dict):
+        raise ValueError("Akamai account map must be a JSON object")
+
+    normalized: dict[str, dict[str, str]] = {}
+    for key, value in payload.items():
+        if isinstance(value, str):
+            normalized[key] = {"accountName": key, "accountId": value}
+            continue
+
+        if isinstance(value, dict):
+            account_id = value.get("accountId") or value.get("account_id")
+            account_name = value.get("accountName") or value.get("account_name") or key
+            if isinstance(account_id, str) and account_id.strip():
+                normalized[key] = {
+                    "accountName": str(account_name),
+                    "accountId": account_id.strip(),
+                }
+
+    if not normalized:
+        raise ValueError("Akamai account map has no valid entries")
+
+    return normalized
+
+
+def create_akamai_session() -> tuple[requests.Session, str]:
+    cfg = get_akamai_config()
+    edge_rc_path = Path(cfg["edge_rc_path"]).expanduser()
+    if not edge_rc_path.exists():
+        raise FileNotFoundError(f".edgerc file not found: {edge_rc_path}")
+
+    edgerc = EdgeRc(edge_rc_path)
+    base_url = f"https://{edgerc.get(cfg['edge_rc_section'], 'host')}"
+
+    session = requests.Session()
+    session.auth = EdgeGridAuth.from_edgerc(edgerc, cfg["edge_rc_section"])
+    session.headers.update({"Content-Type": "application/json", "Accept": "application/json"})
+    return session, base_url
+
+
+@sleep_and_retry
+@limits(calls=100, period=60)
+def fetch_account_switch_keys(session: requests.Session, base_url: str, account_id: str) -> requests.Response:
+    url = urljoin(base_url, "/identity-management/v3/api-clients/self/account-switch-keys")
+    return session.get(url, params={"search": account_id})
+
+
+@sleep_and_retry
+@limits(calls=100, period=60)
+def fetch_hostname_coverage(session: requests.Session, base_url: str) -> requests.Response:
+    url = urljoin(base_url, "/appsec/v1/hostname-coverage")
+    return session.get(url)
+
+
+def resolve_account_switch_key(matches: list[dict[str, Any]], account_id: str) -> dict[str, Any]:
+    if not matches:
+        raise ValueError(f"No Akamai account matched account ID: {account_id}")
+
+    if len(matches) == 1:
+        return matches[0]
+
+    exact_matches = [match for match in matches if match.get("accountName") == account_id]
+    if len(exact_matches) == 1:
+        return exact_matches[0]
+
+    raise ValueError(f"Multiple Akamai accounts matched account ID: {account_id}")
+
+
+def normalize_hostname_coverage(hostnames: list[dict[str, Any]]) -> dict[str, Any]:
+    covered_count = 0
+    not_covered_count = 0
+    unknown_count = 0
+    rows: list[dict[str, Any]] = []
+
+    for hostname in hostnames:
+        raw_status = hostname.get("status")
+        if raw_status == "covered":
+            status = "covered"
+            covered_count += 1
+        elif raw_status == "not_covered":
+            status = "not_covered"
+            not_covered_count += 1
+        else:
+            status = "unknown"
+            unknown_count += 1
+
+        rows.append(
+            {
+                "hostname": hostname.get("hostname", ""),
+                "status": status,
+                "securityConfiguration": hostname.get("configuration", {}).get("name"),
+                "hasMatchTarget": bool(hostname.get("hasMatchTarget")),
+                "securityPolicies": hostname.get("policyNames") or [],
+            }
+        )
+
+    return {
+        "totals": {
+            "covered": covered_count,
+            "notCovered": not_covered_count,
+            "unknown": unknown_count,
+            "total": covered_count + not_covered_count + unknown_count,
+        },
+        "hostnames": rows,
+    }
+
+
+def get_account_hostname_coverage(account_key: str) -> dict[str, Any]:
+    try:
+        mapping = load_account_id_map()
+    except Exception as error:
+        return {"source": "akamai", "data": None, "error": str(error)}
+
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        return {"source": "akamai", "data": None, "error": f"No mapping found for account key: {account_key}"}
+
+    account_id = account_metadata["accountId"]
+    account_name = account_metadata["accountName"]
+
+    try:
+        session, base_url = create_akamai_session()
+
+        switch_key_response = fetch_account_switch_keys(session, base_url, account_id)
+        if switch_key_response.status_code != 200:
+            return {
+                "source": "akamai",
+                "data": None,
+                "error": f"Identity API failed with status code {switch_key_response.status_code}",
+            }
+
+        selected_account = resolve_account_switch_key(switch_key_response.json(), account_id)
+        account_switch_key = selected_account.get("accountSwitchKey")
+        if not account_switch_key:
+            return {"source": "akamai", "data": None, "error": "Missing accountSwitchKey in identity response"}
+
+        session.params = {"accountSwitchKey": account_switch_key}
+
+        hostname_response = fetch_hostname_coverage(session, base_url)
+        if hostname_response.status_code != 200:
+            return {
+                "source": "akamai",
+                "data": None,
+                "error": f"AppSec hostname coverage API failed with status code {hostname_response.status_code}",
+            }
+
+        coverage_payload = hostname_response.json().get("hostnameCoverage") or []
+        normalized = normalize_hostname_coverage(coverage_payload)
+
+        return {
+            "source": "akamai",
+            "data": {
+                "accountKey": account_key,
+                "accountName": account_name,
+                "accountId": account_id,
+                **normalized,
+            },
+        }
+    except Exception as error:
+        return {"source": "akamai", "data": None, "error": str(error)}
 
 
 def get_server_mode() -> str:

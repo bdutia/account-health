@@ -64,6 +64,49 @@ export interface AccountHostnameCoverage {
   hostnames: HostnameCoverageRow[]
 }
 
+export type DnsRecordType = 'CNAME' | 'A' | 'NONE' | 'ERROR'
+
+export interface HostnameCnameRow {
+  propertyId?: string
+  propertyName?: string
+  contractId?: string
+  groupId?: string
+  propertyVersion?: string
+  hostname: string
+  originServers?: string
+  behaviors?: string
+  stagingActivatedAt?: string
+  stagingActivatedBy?: string
+  productionActivatedAt?: string
+  productionActivatedBy?: string
+  resolvedValue?: string
+  recordType?: DnsRecordType
+}
+
+export interface HostnameCnameCoverageTotals {
+  hostnames: number
+  cname: number
+  aRecord: number
+  unresolved: number
+}
+
+export interface HostnameCnameCoverageResult {
+  accountKey: string
+  accountName: string
+  accountId: string
+  totals: HostnameCnameCoverageTotals
+  properties: string[]
+  hostnames: string[]
+  rows: HostnameCnameRow[]
+}
+
+export type JobProgressLevel = 'info' | 'success' | 'warning' | 'error'
+
+export type JobProgressEvent =
+  | { type: 'progress'; message: string; level: JobProgressLevel; percent: number; timestamp: number }
+  | { type: 'completed'; percent: number; result: HostnameCnameCoverageResult; timestamp: number }
+  | { type: 'failed'; message: string; timestamp: number }
+
 export interface AccountDetail {
   accountId: string
   name: string

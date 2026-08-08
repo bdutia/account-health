@@ -1,5 +1,8 @@
+import csv
 import os
 import json
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
@@ -10,6 +13,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from ratelimit import limits, sleep_and_retry
 
+from backend.job_manager import Job
 from backend.mock_data import account_details, accounts, summary_metrics, summary_panels
 
 
@@ -18,19 +22,27 @@ def get_akamai_config() -> dict[str, str]:
         "edge_rc_path": os.getenv("EDGE_RC_PATH") or str(Path.home() / ".edgerc"),
         "edge_rc_section": os.getenv("EDGE_RC_SECTION") or "default",
         "account_map_path": os.getenv("AKAMAI_ACCOUNT_MAP_PATH") or "backend/account_id_map.json",
+        "storage_dir": os.getenv("AKAMAI_STORAGE_DIR") or "backend/storage",
     }
 
 
-def _resolve_account_map_path(account_map_path: str) -> Path:
-    path = Path(account_map_path).expanduser()
+def _resolve_backend_path(raw_path: str) -> Path:
+    path = Path(raw_path).expanduser()
     if path.is_absolute():
         return path
     return (Path(__file__).resolve().parent.parent / path).resolve()
 
 
+def get_storage_dir() -> Path:
+    cfg = get_akamai_config()
+    path = _resolve_backend_path(cfg["storage_dir"])
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def load_account_id_map() -> dict[str, dict[str, str]]:
     cfg = get_akamai_config()
-    path = _resolve_account_map_path(cfg["account_map_path"])
+    path = _resolve_backend_path(cfg["account_map_path"])
     if not path.exists():
         raise FileNotFoundError(f"Akamai account map file not found: {path}")
 
@@ -194,6 +206,544 @@ def get_account_hostname_coverage(account_key: str) -> dict[str, Any]:
         }
     except Exception as error:
         return {"source": "akamai", "data": None, "error": str(error)}
+
+
+FEATURE_MATRIX_COLUMNS = [
+    "propertyId",
+    "propertyName",
+    "contractId",
+    "groupId",
+    "propertyVersion",
+    "hostname",
+    "originServers",
+    "behaviors",
+    "stagingActivatedAt",
+    "stagingActivatedBy",
+    "productionActivatedAt",
+    "productionActivatedBy",
+]
+
+HOST2CNAME_COLUMNS = ["hostname", "resolvedValue", "recordType"]
+
+PROPERTY_WORKER_COUNT = int(os.getenv("AKAMAI_PROPERTY_WORKERS") or 8)
+DNS_WORKER_COUNT = int(os.getenv("AKAMAI_DNS_WORKERS") or 16)
+RATE_LIMIT_COOLOFF_SECONDS = int(os.getenv("AKAMAI_RATE_LIMIT_COOLOFF_SECONDS") or 60)
+
+
+def call_with_cooloff(job: Job, description: str, fetch_fn, *args, max_attempts: int = 3, **kwargs) -> requests.Response:
+    """Call an Akamai API function, pausing and retrying if WAF/API rate limiting (429) is hit."""
+    attempt = 0
+    while True:
+        response = fetch_fn(*args, **kwargs)
+        attempt += 1
+        if response.status_code != 429 or attempt >= max_attempts:
+            return response
+        job.log(
+            f"Rate limited by Akamai while {description} (attempt {attempt}/{max_attempts}); "
+            f"cooling off for {RATE_LIMIT_COOLOFF_SECONDS}s...",
+            level="warning",
+        )
+        time.sleep(RATE_LIMIT_COOLOFF_SECONDS)
+        job.log(f"Resuming {description} after cool-off", level="info")
+
+PROPERTY_WORKER_COUNT = int(os.getenv("AKAMAI_PROPERTY_WORKERS") or 8)
+DNS_WORKER_COUNT = int(os.getenv("AKAMAI_DNS_WORKERS") or 16)
+
+
+@sleep_and_retry
+@limits(calls=100, period=60)
+def fetch_papi_groups(session: requests.Session, base_url: str) -> requests.Response:
+    url = urljoin(base_url, "/papi/v1/groups")
+    return session.get(url)
+
+
+@sleep_and_retry
+@limits(calls=100, period=60)
+def fetch_papi_properties(session: requests.Session, base_url: str, contract_id: str, group_id: str) -> requests.Response:
+    url = urljoin(base_url, "/papi/v1/properties")
+    return session.get(url, params={"contractId": contract_id, "groupId": group_id})
+
+
+@sleep_and_retry
+@limits(calls=100, period=60)
+def fetch_property_hostnames(
+    session: requests.Session, base_url: str, property_id: str, version: int, contract_id: str, group_id: str
+) -> requests.Response:
+    url = urljoin(base_url, f"/papi/v1/properties/{property_id}/versions/{version}/hostnames")
+    return session.get(url, params={"contractId": contract_id, "groupId": group_id})
+
+
+@sleep_and_retry
+@limits(calls=100, period=60)
+def fetch_property_rules(
+    session: requests.Session, base_url: str, property_id: str, version: int, contract_id: str, group_id: str
+) -> requests.Response:
+    url = urljoin(base_url, f"/papi/v1/properties/{property_id}/versions/{version}/rules")
+    return session.get(url, params={"contractId": contract_id, "groupId": group_id})
+
+
+@sleep_and_retry
+@limits(calls=100, period=60)
+def fetch_property_activations(
+    session: requests.Session, base_url: str, property_id: str, contract_id: str, group_id: str
+) -> requests.Response:
+    url = urljoin(base_url, f"/papi/v1/properties/{property_id}/activations")
+    return session.get(url, params={"contractId": contract_id, "groupId": group_id})
+
+
+@sleep_and_retry
+@limits(calls=100, period=60)
+def resolve_hostname_via_google_dns(hostname: str, record_type: str) -> requests.Response:
+    return requests.get("https://dns.google/resolve", params={"name": hostname, "type": record_type}, timeout=10)
+
+
+def extract_behaviors(rules_node: dict[str, Any]) -> list[str]:
+    """Recursively collect every enabled behavior name from a PAPI rule tree."""
+    names: list[str] = []
+
+    def walk(node: dict[str, Any]) -> None:
+        for behavior in node.get("behaviors", []) or []:
+            name = behavior.get("name")
+            if name:
+                names.append(name)
+        for child in node.get("children", []) or []:
+            walk(child)
+
+    walk(rules_node)
+    return sorted(set(names))
+
+
+def extract_origin_hostnames(rules_node: dict[str, Any]) -> list[str]:
+    """Recursively collect origin hostnames configured via the 'origin' behavior."""
+    origins: list[str] = []
+
+    def walk(node: dict[str, Any]) -> None:
+        for behavior in node.get("behaviors", []) or []:
+            if behavior.get("name") == "origin":
+                origin_hostname = behavior.get("options", {}).get("hostname")
+                if origin_hostname:
+                    origins.append(origin_hostname)
+        for child in node.get("children", []) or []:
+            walk(child)
+
+    walk(rules_node)
+    return sorted(set(origins))
+
+
+def summarize_activations(activation_items: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
+    """Return the most recent ACTIVE activation per network with its timestamp and user."""
+    latest: dict[str, dict[str, str]] = {}
+    for item in activation_items:
+        network = item.get("network")
+        if network not in {"STAGING", "PRODUCTION"} or item.get("status") != "ACTIVE":
+            continue
+        update_date = item.get("updateDate") or item.get("submitDate") or ""
+        current = latest.get(network)
+        if not current or update_date > current.get("updateDate", ""):
+            latest[network] = {
+                "updateDate": update_date,
+                "updatedByUser": item.get("updatedByUser", ""),
+            }
+    return latest
+
+
+def fetch_property_hostname_list(
+    session: requests.Session, base_url: str, contract_id: str, group_id: str, prop: dict[str, Any], job: Job
+) -> list[str]:
+    """Group #1: pull just the hostnames configured on a single property."""
+    property_id = prop.get("propertyId")
+    version = prop.get("latestVersion") or prop.get("productionVersion") or prop.get("stagingVersion")
+    if not property_id or not version:
+        return []
+
+    response = call_with_cooloff(
+        job,
+        f"fetching hostnames for property {property_id}",
+        fetch_property_hostnames,
+        session,
+        base_url,
+        property_id,
+        version,
+        contract_id,
+        group_id,
+    )
+    if response.status_code != 200:
+        return []
+
+    return [
+        item.get("cnameFrom", "")
+        for item in response.json().get("hostnames", {}).get("items", [])
+        if item.get("cnameFrom")
+    ]
+
+
+def fetch_hostnames_stage(
+    session: requests.Session, base_url: str, property_tasks: list[tuple[str, str, dict[str, Any]]], job: Job
+) -> dict[str, list[str]]:
+    """Group #1: pull hostnames for every property in parallel, reporting progress as each completes."""
+    total = len(property_tasks)
+    job.log(f"Group 1/3: fetching hostnames for {total} properties...", percent=10)
+
+    results: dict[str, list[str]] = {}
+    completed = 0
+
+    with ThreadPoolExecutor(max_workers=PROPERTY_WORKER_COUNT) as executor:
+        futures = {
+            executor.submit(fetch_property_hostname_list, session, base_url, contract_id, group_id, prop, job): prop
+            for contract_id, group_id, prop in property_tasks
+        }
+        for future in as_completed(futures):
+            prop = futures[future]
+            property_id = prop.get("propertyId")
+            property_name = prop.get("propertyName", property_id)
+            completed += 1
+            percent = 10 + int(25 * completed / max(total, 1))
+            try:
+                results[property_id] = future.result()
+                job.log(f"[Hostnames] '{property_name}' done ({completed}/{total})", level="success", percent=percent)
+            except Exception as error:
+                results[property_id] = []
+                job.log(f"[Hostnames] '{property_name}' failed ({completed}/{total}): {error}", level="error", percent=percent)
+
+    job.log("Group 1/3 complete: hostnames fetched", level="success", percent=35)
+    return results
+
+
+def fetch_property_activation_summary(
+    session: requests.Session, base_url: str, contract_id: str, group_id: str, prop: dict[str, Any], job: Job
+) -> dict[str, dict[str, str]]:
+    """Group #2: pull staging/production activation history for a single property."""
+    property_id = prop.get("propertyId")
+    if not property_id:
+        return {}
+
+    response = call_with_cooloff(
+        job,
+        f"fetching activations for property {property_id}",
+        fetch_property_activations,
+        session,
+        base_url,
+        property_id,
+        contract_id,
+        group_id,
+    )
+    if response.status_code != 200:
+        return {}
+
+    activation_items = response.json().get("activations", {}).get("items", [])
+    return summarize_activations(activation_items)
+
+
+def fetch_activations_stage(
+    session: requests.Session, base_url: str, property_tasks: list[tuple[str, str, dict[str, Any]]], job: Job
+) -> dict[str, dict[str, dict[str, str]]]:
+    """Group #2: pull activations for every property in parallel, reporting progress as each completes."""
+    total = len(property_tasks)
+    job.log(f"Group 2/3: fetching activations for {total} properties...", percent=35)
+
+    results: dict[str, dict[str, dict[str, str]]] = {}
+    completed = 0
+
+    with ThreadPoolExecutor(max_workers=PROPERTY_WORKER_COUNT) as executor:
+        futures = {
+            executor.submit(fetch_property_activation_summary, session, base_url, contract_id, group_id, prop, job): prop
+            for contract_id, group_id, prop in property_tasks
+        }
+        for future in as_completed(futures):
+            prop = futures[future]
+            property_id = prop.get("propertyId")
+            property_name = prop.get("propertyName", property_id)
+            completed += 1
+            percent = 35 + int(20 * completed / max(total, 1))
+            try:
+                results[property_id] = future.result()
+                job.log(f"[Activations] '{property_name}' done ({completed}/{total})", level="success", percent=percent)
+            except Exception as error:
+                results[property_id] = {}
+                job.log(f"[Activations] '{property_name}' failed ({completed}/{total}): {error}", level="error", percent=percent)
+
+    job.log("Group 2/3 complete: activations fetched", level="success", percent=55)
+    return results
+
+
+def fetch_property_features(
+    session: requests.Session, base_url: str, contract_id: str, group_id: str, prop: dict[str, Any], job: Job
+) -> dict[str, list[str]]:
+    """Group #3: pull the rule tree for a single property and extract behaviors + origin hostnames."""
+    property_id = prop.get("propertyId")
+    version = prop.get("latestVersion") or prop.get("productionVersion") or prop.get("stagingVersion")
+    if not property_id or not version:
+        return {"behaviors": [], "origins": []}
+
+    response = call_with_cooloff(
+        job,
+        f"fetching rules for property {property_id}",
+        fetch_property_rules,
+        session,
+        base_url,
+        property_id,
+        version,
+        contract_id,
+        group_id,
+    )
+    rules_root = response.json().get("rules", {}) if response.status_code == 200 else {}
+    return {"behaviors": extract_behaviors(rules_root), "origins": extract_origin_hostnames(rules_root)}
+
+
+def fetch_features_stage(
+    session: requests.Session, base_url: str, property_tasks: list[tuple[str, str, dict[str, Any]]], job: Job
+) -> dict[str, dict[str, list[str]]]:
+    """Group #3: pull rule-tree behaviors/origins for every property in parallel, reporting progress as each completes."""
+    total = len(property_tasks)
+    job.log(f"Group 3/3: fetching feature behaviors for {total} properties...", percent=55)
+
+    results: dict[str, dict[str, list[str]]] = {}
+    completed = 0
+
+    with ThreadPoolExecutor(max_workers=PROPERTY_WORKER_COUNT) as executor:
+        futures = {
+            executor.submit(fetch_property_features, session, base_url, contract_id, group_id, prop, job): prop
+            for contract_id, group_id, prop in property_tasks
+        }
+        for future in as_completed(futures):
+            prop = futures[future]
+            property_id = prop.get("propertyId")
+            property_name = prop.get("propertyName", property_id)
+            completed += 1
+            percent = 55 + int(20 * completed / max(total, 1))
+            try:
+                results[property_id] = future.result()
+                job.log(f"[Features] '{property_name}' done ({completed}/{total})", level="success", percent=percent)
+            except Exception as error:
+                results[property_id] = {"behaviors": [], "origins": []}
+                job.log(f"[Features] '{property_name}' failed ({completed}/{total}): {error}", level="error", percent=percent)
+
+    job.log("Group 3/3 complete: feature behaviors fetched", level="success", percent=75)
+    return results
+
+
+def discover_properties(
+    session: requests.Session, base_url: str, job: Job
+) -> list[tuple[str, str, dict[str, Any]]]:
+    """Walk every group/contract and list the distinct properties in the account."""
+    job.log("Fetching Akamai groups...", percent=2)
+    groups_response = call_with_cooloff(job, "fetching groups", fetch_papi_groups, session, base_url)
+    if groups_response.status_code != 200:
+        raise ValueError(f"PAPI groups request failed with status code {groups_response.status_code}")
+
+    groups = groups_response.json().get("groups", {}).get("items", [])
+    job.log(f"Fetched {len(groups)} groups successfully", level="success", percent=5)
+
+    property_tasks: list[tuple[str, str, dict[str, Any]]] = []
+    seen_properties: set[str] = set()
+
+    for group in groups:
+        group_id = group.get("groupId")
+        for contract_id in group.get("contractIds", []) or []:
+            properties_response = call_with_cooloff(
+                job,
+                f"fetching properties for group {group_id} / contract {contract_id}",
+                fetch_papi_properties,
+                session,
+                base_url,
+                contract_id,
+                group_id,
+            )
+            if properties_response.status_code != 200:
+                job.log(
+                    f"Failed to fetch properties for group {group_id} / contract {contract_id}",
+                    level="error",
+                )
+                continue
+
+            for prop in properties_response.json().get("properties", {}).get("items", []):
+                property_id = prop.get("propertyId")
+                if not property_id or property_id in seen_properties:
+                    continue
+                seen_properties.add(property_id)
+                property_tasks.append((contract_id, group_id, prop))
+
+    job.log(f"Discovered {len(property_tasks)} properties across all groups/contracts", level="success", percent=10)
+    return property_tasks
+
+
+def build_feature_matrix(session: requests.Session, base_url: str, job: Job) -> list[dict[str, Any]]:
+    """Discover every property, then fetch hostnames, activations and features as three separate parallel stages."""
+    property_tasks = discover_properties(session, base_url, job)
+
+    hostnames_by_property = fetch_hostnames_stage(session, base_url, property_tasks, job)
+    activations_by_property = fetch_activations_stage(session, base_url, property_tasks, job)
+    features_by_property = fetch_features_stage(session, base_url, property_tasks, job)
+
+    job.log("Combining property results into feature matrix...", percent=76)
+    rows: list[dict[str, Any]] = []
+
+    for contract_id, group_id, prop in property_tasks:
+        property_id = prop.get("propertyId")
+        version = prop.get("latestVersion") or prop.get("productionVersion") or prop.get("stagingVersion")
+        hostnames = hostnames_by_property.get(property_id) or [""]
+        activation_summary = activations_by_property.get(property_id) or {}
+        staging = activation_summary.get("STAGING", {})
+        production = activation_summary.get("PRODUCTION", {})
+        features = features_by_property.get(property_id) or {"behaviors": [], "origins": []}
+
+        for hostname in hostnames:
+            rows.append(
+                {
+                    "propertyId": property_id,
+                    "propertyName": prop.get("propertyName", ""),
+                    "contractId": contract_id,
+                    "groupId": group_id,
+                    "propertyVersion": version,
+                    "hostname": hostname,
+                    "originServers": ";".join(features["origins"]),
+                    "behaviors": ";".join(features["behaviors"]),
+                    "stagingActivatedAt": staging.get("updateDate", ""),
+                    "stagingActivatedBy": staging.get("updatedByUser", ""),
+                    "productionActivatedAt": production.get("updateDate", ""),
+                    "productionActivatedBy": production.get("updatedByUser", ""),
+                }
+            )
+
+    job.log("Feature matrix build complete", level="success", percent=78)
+    return rows
+
+
+def write_feature_matrix_csv(rows: list[dict[str, Any]]) -> Path:
+    path = get_storage_dir() / "featureMatrix.csv"
+    with path.open("w", newline="") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=FEATURE_MATRIX_COLUMNS)
+        writer.writeheader()
+        writer.writerows(rows)
+    return path
+
+
+def read_feature_matrix_csv() -> list[dict[str, str]]:
+    path = get_storage_dir() / "featureMatrix.csv"
+    if not path.exists():
+        return []
+    with path.open(newline="") as csv_file:
+        return list(csv.DictReader(csv_file))
+
+
+def resolve_hostname_cname_or_ip(hostname: str) -> dict[str, str]:
+    """Resolve a hostname's CNAME via Google Public DNS, falling back to its A record."""
+    try:
+        cname_response = resolve_hostname_via_google_dns(hostname, "CNAME")
+        cname_payload = cname_response.json() if cname_response.status_code == 200 else {}
+        cname_answer = next((a for a in cname_payload.get("Answer") or [] if a.get("type") == 5), None)
+        if cname_answer:
+            return {"hostname": hostname, "resolvedValue": cname_answer.get("data", "").rstrip("."), "recordType": "CNAME"}
+
+        a_response = resolve_hostname_via_google_dns(hostname, "A")
+        a_payload = a_response.json() if a_response.status_code == 200 else {}
+        a_answer = next((a for a in a_payload.get("Answer") or [] if a.get("type") == 1), None)
+        if a_answer:
+            return {"hostname": hostname, "resolvedValue": a_answer.get("data", ""), "recordType": "A"}
+
+        return {"hostname": hostname, "resolvedValue": "", "recordType": "NONE"}
+    except Exception:
+        return {"hostname": hostname, "resolvedValue": "", "recordType": "ERROR"}
+
+
+def resolve_hostnames_concurrent(hostnames: list[str], job: Job) -> list[dict[str, str]]:
+    """Resolve every hostname's CNAME/A record concurrently via a thread pool, logging progress."""
+    total = len(hostnames)
+    job.log(f"Resolving DNS for {total} hostnames via Google Public DNS...", percent=80)
+
+    results: list[dict[str, str]] = []
+    completed = 0
+
+    with ThreadPoolExecutor(max_workers=DNS_WORKER_COUNT) as executor:
+        futures = {executor.submit(resolve_hostname_cname_or_ip, hostname): hostname for hostname in hostnames}
+        for future in as_completed(futures):
+            hostname = futures[future]
+            completed += 1
+            percent = 80 + int(17 * completed / max(total, 1))
+            result = future.result()
+            level = "success" if result["recordType"] in {"CNAME", "A"} else "warning"
+            job.log(
+                f"Resolved {hostname} -> {result['recordType']} ({completed}/{total})",
+                level=level,
+                percent=percent,
+            )
+            results.append(result)
+
+    return results
+
+
+def write_host2cname_csv(rows: list[dict[str, str]]) -> Path:
+    path = get_storage_dir() / "host2cname.csv"
+    with path.open("w", newline="") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=HOST2CNAME_COLUMNS)
+        writer.writeheader()
+        writer.writerows(rows)
+    return path
+
+
+def get_account_hostname_cname_coverage(account_key: str, job: Job) -> dict[str, Any]:
+    job.log(f"Looking up Akamai account mapping for '{account_key}'...", percent=1)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    account_id = account_metadata["accountId"]
+    account_name = account_metadata["accountName"]
+    job.log(f"Resolved account '{account_key}' -> {account_name} ({account_id})", level="success", percent=2)
+
+    session, base_url = create_akamai_session()
+
+    job.log("Requesting Akamai identity access (account switch key)...", percent=3)
+    switch_key_response = call_with_cooloff(job, "requesting identity access", fetch_account_switch_keys, session, base_url, account_id)
+    if switch_key_response.status_code != 200:
+        raise ValueError(f"Identity API failed with status code {switch_key_response.status_code}")
+
+    selected_account = resolve_account_switch_key(switch_key_response.json(), account_id)
+    account_switch_key = selected_account.get("accountSwitchKey")
+    if not account_switch_key:
+        raise ValueError("Missing accountSwitchKey in identity response")
+
+    session.params = {"accountSwitchKey": account_switch_key}
+    job.log("Identity access granted", level="success", percent=5)
+
+    feature_matrix_rows = build_feature_matrix(session, base_url, job)
+    write_feature_matrix_csv(feature_matrix_rows)
+    job.log(f"Saved feature matrix ({len(feature_matrix_rows)} rows) to featureMatrix.csv", level="success", percent=79)
+
+    hostnames = sorted({row["hostname"] for row in feature_matrix_rows if row.get("hostname")})
+    host2cname_rows = resolve_hostnames_concurrent(hostnames, job)
+    write_host2cname_csv(host2cname_rows)
+    job.log("Saved host-to-CNAME mapping to host2cname.csv", level="success", percent=97)
+
+    cname_count = sum(1 for row in host2cname_rows if row["recordType"] == "CNAME")
+    a_record_count = sum(1 for row in host2cname_rows if row["recordType"] == "A")
+    unresolved_count = sum(1 for row in host2cname_rows if row["recordType"] in {"NONE", "ERROR"})
+
+    resolution_by_hostname = {row["hostname"]: row for row in host2cname_rows}
+    table_rows = [
+        {**matrix_row, **resolution_by_hostname.get(matrix_row["hostname"], {})}
+        for matrix_row in feature_matrix_rows
+        if matrix_row.get("hostname")
+    ]
+    properties = sorted({row.get("propertyName", "") for row in feature_matrix_rows if row.get("propertyName")})
+
+    job.log("Hostname CNAME coverage complete", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_name,
+        "accountId": account_id,
+        "totals": {
+            "hostnames": len(host2cname_rows),
+            "cname": cname_count,
+            "aRecord": a_record_count,
+            "unresolved": unresolved_count,
+        },
+        "properties": properties,
+        "hostnames": [row["hostname"] for row in host2cname_rows],
+        "rows": table_rows,
+    }
 
 
 def get_server_mode() -> str:

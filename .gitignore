@@ -32,3 +32,6 @@ __pycache__/
 *.pyc
 *.pyo
 .venv/
+
+# Generated Akamai feature matrix / CNAME data
+backend/storage/

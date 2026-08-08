@@ -134,6 +134,13 @@ export function AccountDetailPage() {
             ) : null}
           </div>
 
+          <Link
+            className="mb-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/hostname-cname-coverage`}
+          >
+            Run Hostname &amp; CNAME Coverage Scan →
+          </Link>
+
           {!hostnameCoverage ? (
             <p className="text-sm text-slate-600">
               Hostname coverage is unavailable for this account or this environment is not using backend mode.

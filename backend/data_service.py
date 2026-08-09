@@ -53,16 +53,18 @@ def load_account_id_map() -> dict[str, dict[str, str]]:
     normalized: dict[str, dict[str, str]] = {}
     for key, value in payload.items():
         if isinstance(value, str):
-            normalized[key] = {"accountName": key, "accountId": value}
+            normalized[key] = {"accountName": key, "accountId": value, "csvAccountDir": key}
             continue
 
         if isinstance(value, dict):
             account_id = value.get("accountId") or value.get("account_id")
             account_name = value.get("accountName") or value.get("account_name") or key
+            csv_account_dir = value.get("csvAccountDir") or value.get("csv_account_dir") or key
             if isinstance(account_id, str) and account_id.strip():
                 normalized[key] = {
                     "accountName": str(account_name),
                     "accountId": account_id.strip(),
+                    "csvAccountDir": str(csv_account_dir),
                 }
 
     if not normalized:
@@ -743,6 +745,119 @@ def get_account_hostname_cname_coverage(account_key: str, job: Job) -> dict[str,
         "properties": properties,
         "hostnames": [row["hostname"] for row in host2cname_rows],
         "rows": table_rows,
+    }
+
+
+CNAME_STATUS_RELATIVE_PATH = Path("REPORTS") / "CSVDATA" / "cname-status.csv"
+CSV_DATA_MODES = {"csv_data_local", "csv_data_remote"}
+
+
+def get_ns_config() -> dict[str, str]:
+    return {
+        "hostname": os.getenv("NS_HOSTNAME", ""),
+        "keyname": os.getenv("NS_KEYNAME", ""),
+        "key": os.getenv("NS_KEY", ""),
+        "cp_code": os.getenv("NS_CP_CODE", ""),
+    }
+
+
+def download_csv_from_netstorage(remote_path: str, local_path: Path, job: Job | None = None) -> None:
+    """Download a single report file from Akamai NetStorage into the local cache path.
+
+    Credentials are read from NS_HOSTNAME/NS_KEYNAME/NS_KEY/NS_CP_CODE env vars (never hardcoded)."""
+    try:
+        from akamai.netstorage import Netstorage
+    except ImportError as error:
+        raise ValueError(
+            "NetStorage SDK not installed; install the package that provides 'akamai.netstorage' to enable remote downloads"
+        ) from error
+
+    cfg = get_ns_config()
+    missing = [name for name in ("hostname", "keyname", "key") if not cfg[name]]
+    if missing:
+        raise ValueError(
+            f"Missing NetStorage credentials: {', '.join(missing)} (set NS_HOSTNAME/NS_KEYNAME/NS_KEY env vars)"
+        )
+
+    if job:
+        job.log(f"Downloading {remote_path} from NetStorage...", percent=20)
+
+    netstorage = Netstorage(cfg["hostname"], cfg["keyname"], cfg["key"])
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    success = netstorage.download(remote_path, str(local_path))
+    if not success:
+        raise ValueError(f"NetStorage download failed for path: {remote_path}")
+
+    if job:
+        job.log(f"Downloaded {remote_path} -> {local_path.name}", level="success", percent=45)
+
+
+def resolve_report_csv_path(
+    account_key: str, data_mode: str, relative_path: Path, job: Job | None = None
+) -> Path:
+    """Resolve (and, for remote mode, lazily download/cache) a per-account report CSV path."""
+    if data_mode not in CSV_DATA_MODES:
+        raise ValueError(f"Invalid data mode: {data_mode}. Expected one of {sorted(CSV_DATA_MODES)}")
+
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    account_dir = account_metadata.get("csvAccountDir") or account_key
+    account_relative_path = Path(account_dir) / relative_path
+    local_path = get_storage_dir() / data_mode / account_relative_path
+
+    if data_mode == "csv_data_remote" and not local_path.exists():
+        cfg = get_ns_config()
+        cp_code = cfg["cp_code"]
+        remote_path = "/" + "/".join(part for part in [cp_code, *account_relative_path.parts] if part)
+        download_csv_from_netstorage(remote_path, local_path, job)
+    elif job:
+        job.log(f"Using cached CSV at {local_path}", percent=20)
+
+    if not local_path.exists():
+        raise FileNotFoundError(f"CSV report not found: {local_path}")
+
+    return local_path
+
+
+def read_csv_as_json(path: Path) -> tuple[list[str], list[dict[str, str]]]:
+    """Read a CSV file, preserving its header row as the JSON column names."""
+    with path.open(newline="", encoding="utf-8") as csv_file:
+        reader = csv.DictReader(csv_file)
+        columns = list(reader.fieldnames or [])
+        rows = [dict(row) for row in reader]
+    return columns, rows
+
+
+def get_account_hostname_cname_matrix(account_key: str, data_mode: str, job: Job) -> dict[str, Any]:
+    """Build the hostname/CNAME matrix for an account from the cname-status.csv report."""
+    job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    job.log(f"Resolving cname-status.csv location ({data_mode})...", percent=8)
+    csv_path = resolve_report_csv_path(account_key, data_mode, CNAME_STATUS_RELATIVE_PATH, job)
+
+    job.log(f"Reading {csv_path.name}...", percent=60)
+    columns, rows = read_csv_as_json(csv_path)
+
+    hostnames = sorted({row.get("hostname", "") for row in rows if row.get("hostname")})
+
+    job.log("Hostname CNAME matrix ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "columns": columns,
+        "hostnames": hostnames,
+        "rows": rows,
+        "totals": {"rows": len(rows), "hostnames": len(hostnames)},
     }
 
 

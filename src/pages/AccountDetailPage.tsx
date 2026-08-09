@@ -140,6 +140,12 @@ export function AccountDetailPage() {
           >
             Run Hostname &amp; CNAME Coverage Scan →
           </Link>
+          <Link
+            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/hostmatrix-cname`}
+          >
+            View Hostname CNAME Matrix →
+          </Link>
 
           {!hostnameCoverage ? (
             <p className="text-sm text-slate-600">

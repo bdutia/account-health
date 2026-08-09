@@ -107,6 +107,29 @@ export type JobProgressEvent =
   | { type: 'completed'; percent: number; result: HostnameCnameCoverageResult; timestamp: number }
   | { type: 'failed'; message: string; timestamp: number }
 
+export type CsvDataMode = 'csv_data_local' | 'csv_data_remote'
+
+export interface HostnameCnameMatrixTotals {
+  rows: number
+  hostnames: number
+}
+
+export interface HostnameCnameMatrixResult {
+  accountKey: string
+  accountName: string
+  accountId: string
+  dataMode: CsvDataMode
+  columns: string[]
+  hostnames: string[]
+  rows: Array<Record<string, string>>
+  totals: HostnameCnameMatrixTotals
+}
+
+export type HostnameCnameMatrixJobProgressEvent =
+  | { type: 'progress'; message: string; level: JobProgressLevel; percent: number; timestamp: number }
+  | { type: 'completed'; percent: number; result: HostnameCnameMatrixResult; timestamp: number }
+  | { type: 'failed'; message: string; timestamp: number }
+
 export interface AccountDetail {
   accountId: string
   name: string

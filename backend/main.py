@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -11,11 +11,12 @@ from fastapi.staticfiles import StaticFiles
 from backend.data_service import (
     get_account_hostname_coverage,
     get_account_hostname_cname_coverage,
+    get_account_hostname_cname_matrix,
     get_account_dashboard_data,
     get_summary_dashboard_data,
     get_summary_dashboard_debug,
 )
-from backend.job_manager import job_manager
+from backend.job_manager import Job, job_manager
 
 load_dotenv('.env.server')
 
@@ -78,6 +79,18 @@ def account_hostname_coverage(account_key: str) -> dict[str, object]:
     return result
 
 
+def _job_event_stream(job: Job) -> StreamingResponse:
+    def event_stream():
+        subscriber = job.subscribe()
+        while True:
+            entry = subscriber.get()
+            if entry is None:
+                break
+            yield f'data: {json.dumps(entry)}\n\n'
+
+    return StreamingResponse(event_stream(), media_type='text/event-stream')
+
+
 @app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/hostname-cname-coverage/jobs')
 def start_hostname_cname_coverage_job(account_key: str) -> dict[str, object]:
     job = job_manager.create()
@@ -90,16 +103,27 @@ def stream_hostname_cname_coverage_job(account_key: str, job_id: str) -> Streami
     job = job_manager.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail='Job not found')
+    return _job_event_stream(job)
 
-    def event_stream():
-        subscriber = job.subscribe()
-        while True:
-            entry = subscriber.get()
-            if entry is None:
-                break
-            yield f'data: {json.dumps(entry)}\n\n'
 
-    return StreamingResponse(event_stream(), media_type='text/event-stream')
+@app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/hostMatrix/cname/jobs')
+def start_hostname_cname_matrix_job(
+    account_key: str,
+    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+) -> dict[str, object]:
+    job = job_manager.create()
+    job_manager.run_in_background(
+        job, lambda active_job: get_account_hostname_cname_matrix(account_key, data, active_job)
+    )
+    return {'jobId': job.job_id}
+
+
+@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/hostMatrix/cname/jobs/{{job_id}}/events')
+def stream_hostname_cname_matrix_job(account_key: str, job_id: str) -> StreamingResponse:
+    job = job_manager.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail='Job not found')
+    return _job_event_stream(job)
 
 
 DIST_DIR = Path(__file__).resolve().parent.parent / 'dist'

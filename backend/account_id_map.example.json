@@ -1,6 +1,7 @@
 {
   "acme-corp": {
     "accountName": "Acme Corp",
-    "accountId": "1-40SFN"
+    "accountId": "1-40SFN",
+    "csvAccountDir": "test-account-dir"
   }
 }

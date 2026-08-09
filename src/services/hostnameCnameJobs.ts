@@ -2,6 +2,7 @@ import type {
   CsvDataMode,
   HostnameCnameMatrixJobProgressEvent,
   HostnameCnameMatrixSummaryJobProgressEvent,
+  HostnameCnameMatrixSummaryResult,
   JobProgressEvent,
 } from '../types/dashboard'
 
@@ -133,4 +134,23 @@ export function subscribeToHostnameCnameMatrixSummaryJob(
   }
 
   return () => source.close()
+}
+
+// Synchronous fetch (no job/SSE wrapper) for other components that just need the summary JSON.
+export async function fetchHostnameCnameMatrixSummary(
+  accountKey: string,
+  dataMode: CsvDataMode,
+  context?: string,
+): Promise<HostnameCnameMatrixSummaryResult> {
+  const params = new URLSearchParams({ data: dataMode, jsonOut: 'true' })
+  if (context) {
+    params.set('context', context)
+  }
+  const response = await fetch(
+    `${API_BASE_URL}/api/dashboard/account/${accountKey}/hostMatrix/cname/summary?${params.toString()}`,
+  )
+  if (!response.ok) {
+    throw new Error(`Failed to fetch hostname CNAME matrix summary: ${response.status}`)
+  }
+  return (await response.json()) as HostnameCnameMatrixSummaryResult
 }

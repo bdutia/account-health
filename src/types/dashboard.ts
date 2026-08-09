@@ -133,12 +133,12 @@ export type HostnameCnameMatrixJobProgressEvent =
 export interface HostnameCnameMatrixSummaryTotals {
   rows: number
   hostnames: number
-  mapped: number
-  unmapped: number
+  covered: number
+  notCovered: number
 }
 
-export interface HostnameCnameMatrixMapBreakdownItem {
-  map: string
+export interface HostnameCnameMatrixBreakdownItem {
+  value: string
   count: number
 }
 
@@ -147,8 +147,9 @@ export interface HostnameCnameMatrixSummaryResult {
   accountName: string
   accountId: string
   dataMode: CsvDataMode
+  columns: string[]
   totals: HostnameCnameMatrixSummaryTotals
-  mapBreakdown: HostnameCnameMatrixMapBreakdownItem[]
+  breakdowns: Record<string, HostnameCnameMatrixBreakdownItem[]>
 }
 
 export type HostnameCnameMatrixSummaryJobProgressEvent =

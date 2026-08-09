@@ -149,6 +149,20 @@ def stream_hostname_cname_matrix_summary_job(account_key: str, job_id: str) -> S
     return _job_event_stream(job)
 
 
+@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/hostMatrix/cname/summary')
+def hostname_cname_matrix_summary_json(
+    account_key: str,
+    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    context: str | None = Query(None),
+    jsonOut: bool = Query(True),
+) -> dict[str, object]:
+    """Synchronous summary endpoint (no job/SSE wrapper) for other components to consume directly."""
+    try:
+        return get_account_hostname_cname_matrix_summary(account_key, data, None, context)
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error))
+
+
 DIST_DIR = Path(__file__).resolve().parent.parent / 'dist'
 ASSETS_DIR = DIST_DIR / 'assets'
 

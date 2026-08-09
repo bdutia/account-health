@@ -749,6 +749,7 @@ def get_account_hostname_cname_coverage(account_key: str, job: Job) -> dict[str,
 
 
 CNAME_STATUS_RELATIVE_PATH = Path("REPORTS") / "CSVDATA" / "cname-status.csv"
+CONFIG_SUMMARY_RELATIVE_PATH = Path("REPORTS") / "CSVDATA" / "config-summary.csv"
 CSV_DATA_MODES = {"csv_data_local", "csv_data_remote"}
 
 
@@ -926,18 +927,24 @@ def read_csv_as_json(path: Path) -> tuple[list[str], list[dict[str, str]]]:
     return columns, rows
 
 
+def is_hostname_covered(row: dict[str, str]) -> bool:
+    """A hostname is considered covered when it has a non-empty, non-placeholder cnameTo value."""
+    cname_to = (row.get("cnameTo") or "").strip()
+    return bool(cname_to) and cname_to != "-"
+
+
 def get_account_hostname_cname_matrix(
     account_key: str, data_mode: str, job: Job, context: str | None = None
 ) -> dict[str, Any]:
-    """Build the hostname/CNAME matrix for an account from the cname-status.csv report."""
+    """Build the hostname/CNAME matrix for an account from the config-summary.csv report."""
     job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
     mapping = load_account_id_map()
     account_metadata = mapping.get(account_key)
     if not account_metadata:
         raise ValueError(f"No mapping found for account key: {account_key}")
 
-    job.log(f"Resolving cname-status.csv location ({data_mode})...", percent=8)
-    csv_path = resolve_report_csv_path(account_key, data_mode, CNAME_STATUS_RELATIVE_PATH, job, context)
+    job.log(f"Resolving config-summary.csv location ({data_mode})...", percent=8)
+    csv_path = resolve_report_csv_path(account_key, data_mode, CONFIG_SUMMARY_RELATIVE_PATH, job, context)
 
     job.log(f"Reading {csv_path.name}...", percent=60)
     columns, rows = read_csv_as_json(csv_path)
@@ -959,50 +966,58 @@ def get_account_hostname_cname_matrix(
 
 
 def get_account_hostname_cname_matrix_summary(
-    account_key: str, data_mode: str, job: Job, context: str | None = None
+    account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
 ) -> dict[str, Any]:
-    """Summarize the cname-status.csv report: totals plus breakdowns by map/edge/record presence."""
-    job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    """Summarize the config-summary.csv report: covered/not-covered totals plus a per-column value breakdown."""
+    if job:
+        job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
     mapping = load_account_id_map()
     account_metadata = mapping.get(account_key)
     if not account_metadata:
         raise ValueError(f"No mapping found for account key: {account_key}")
 
-    job.log(f"Resolving cname-status.csv location ({data_mode})...", percent=8)
-    csv_path = resolve_report_csv_path(account_key, data_mode, CNAME_STATUS_RELATIVE_PATH, job, context)
+    if job:
+        job.log(f"Resolving config-summary.csv location ({data_mode})...", percent=8)
+    csv_path = resolve_report_csv_path(account_key, data_mode, CONFIG_SUMMARY_RELATIVE_PATH, job, context)
 
-    job.log(f"Reading {csv_path.name}...", percent=60)
-    _, rows = read_csv_as_json(csv_path)
+    if job:
+        job.log(f"Reading {csv_path.name}...", percent=60)
+    columns, rows = read_csv_as_json(csv_path)
 
-    job.log("Computing summary breakdowns...", percent=80)
+    if job:
+        job.log("Computing summary breakdowns...", percent=80)
     total_rows = len(rows)
-    mapped_rows = [row for row in rows if (row.get("edge") or "-") != "-"]
-    unmapped_count = total_rows - len(mapped_rows)
-
-    map_counts: dict[str, int] = {}
-    for row in mapped_rows:
-        map_value = row.get("map") or "unknown"
-        map_counts[map_value] = map_counts.get(map_value, 0) + 1
-
     hostnames = sorted({row.get("hostname", "") for row in rows if row.get("hostname")})
+    covered_count = sum(1 for row in rows if is_hostname_covered(row))
+    not_covered_count = total_rows - covered_count
 
-    job.log("Hostname CNAME matrix summary ready", level="success", percent=100)
+    breakdowns: dict[str, list[dict[str, Any]]] = {}
+    for column in columns:
+        value_counts: dict[str, int] = {}
+        for row in rows:
+            value = (row.get(column) or "").strip() or "(blank)"
+            value_counts[value] = value_counts.get(value, 0) + 1
+        breakdowns[column] = [
+            {"value": value, "count": count}
+            for value, count in sorted(value_counts.items(), key=lambda item: item[1], reverse=True)
+        ]
+
+    if job:
+        job.log("Hostname CNAME matrix summary ready", level="success", percent=100)
 
     return {
         "accountKey": account_key,
         "accountName": account_metadata.get("accountName", account_key),
         "accountId": account_metadata.get("accountId", ""),
         "dataMode": data_mode,
+        "columns": columns,
         "totals": {
             "rows": total_rows,
             "hostnames": len(hostnames),
-            "mapped": len(mapped_rows),
-            "unmapped": unmapped_count,
+            "covered": covered_count,
+            "notCovered": not_covered_count,
         },
-        "mapBreakdown": [
-            {"map": map_value, "count": count}
-            for map_value, count in sorted(map_counts.items(), key=lambda item: item[1], reverse=True)
-        ],
+        "breakdowns": breakdowns,
     }
 
 

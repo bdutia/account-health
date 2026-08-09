@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { DashboardLayout } from '../components/DashboardLayout'
 import {
@@ -43,6 +43,8 @@ export function HostMatrixCnameSummaryPage() {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [result, setResult] = useState<HostnameCnameMatrixSummaryResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [chartColumn, setChartColumn] = useState(COVERAGE_COLUMN)
+  const [selectedSlice, setSelectedSlice] = useState<string | null>(null)
   const unsubscribeRef = useRef<(() => void) | undefined>(undefined)
 
   useEffect(() => {
@@ -102,6 +104,21 @@ export function HostMatrixCnameSummaryPage() {
       unsubscribeRef.current?.()
     }
   }, [accountId, dataMode, context])
+
+  const chartData = useMemo(() => {
+    if (!result) {
+      return []
+    }
+    if (chartColumn === COVERAGE_COLUMN) {
+      return [
+        { label: 'Covered', count: result.totals.covered },
+        { label: 'Not Covered', count: result.totals.notCovered },
+      ]
+    }
+    return (result.breakdowns[chartColumn] ?? []).map((item) => ({ label: item.value, count: item.count }))
+  }, [result, chartColumn])
+
+  const chartTotal = chartData.reduce((sum, item) => sum + item.count, 0)
 
   return (
     <DashboardLayout title="Hostname CNAME Matrix Summary">
@@ -176,32 +193,161 @@ export function HostMatrixCnameSummaryPage() {
             <div className="mb-6 flex flex-wrap gap-3 text-sm font-semibold text-slate-700">
               <span className="rounded-full bg-slate-800 px-3 py-1 text-white">Rows: {result.totals.rows}</span>
               <span className="rounded-full bg-slate-200 px-3 py-1 text-slate-700">Hostnames: {result.totals.hostnames}</span>
-              <span className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-700">Mapped: {result.totals.mapped}</span>
-              <span className="rounded-full bg-rose-100 px-3 py-1 text-rose-700">Unmapped: {result.totals.unmapped}</span>
+              <span className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-700">Covered: {result.totals.covered}</span>
+              <span className="rounded-full bg-rose-100 px-3 py-1 text-rose-700">Not Covered: {result.totals.notCovered}</span>
             </div>
 
-            <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-slate-500">Breakdown by Map</h3>
-            <div className="overflow-x-auto">
-              <table className="min-w-full border-separate border-spacing-y-2 text-sm">
-                <thead>
-                  <tr className="text-left text-slate-500">
-                    <th className="px-2 py-1 font-semibold">Map</th>
-                    <th className="px-2 py-1 font-semibold">Count</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.mapBreakdown.map((item) => (
-                    <tr key={item.map} className="rounded-lg bg-slate-50 text-slate-700">
-                      <td className="px-2 py-2 font-semibold">{item.map}</td>
-                      <td className="px-2 py-2">{item.count}</td>
-                    </tr>
+            <div className="mb-4 flex flex-wrap items-center gap-3">
+              <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                Chart by column:
+                <select
+                  className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-normal"
+                  value={chartColumn}
+                  onChange={(event) => {
+                    setChartColumn(event.target.value)
+                    setSelectedSlice(null)
+                  }}
+                >
+                  <option value={COVERAGE_COLUMN}>Coverage (covered / not covered)</option>
+                  {result.columns.map((column) => (
+                    <option key={column} value={column}>
+                      {column}
+                    </option>
                   ))}
-                </tbody>
-              </table>
+                </select>
+              </label>
+              {selectedSlice ? (
+                <button
+                  type="button"
+                  onClick={() => setSelectedSlice(null)}
+                  className="rounded-full bg-slate-200 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-300"
+                >
+                  Clear selection
+                </button>
+              ) : null}
+            </div>
+
+            <div className="flex flex-wrap items-start gap-8">
+              <PieChart data={chartData} selectedLabel={selectedSlice} onSelectSlice={setSelectedSlice} />
+
+              <div className="min-w-[16rem] flex-1 overflow-x-auto">
+                <table className="min-w-full border-separate border-spacing-y-2 text-sm">
+                  <thead>
+                    <tr className="text-left text-slate-500">
+                      <th className="px-2 py-1 font-semibold">Value</th>
+                      <th className="px-2 py-1 font-semibold">Count</th>
+                      <th className="px-2 py-1 font-semibold">Share</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {chartData.map((item, index) => (
+                      <tr
+                        key={item.label}
+                        onClick={() => setSelectedSlice(selectedSlice === item.label ? null : item.label)}
+                        className={`cursor-pointer rounded-lg text-slate-700 ${selectedSlice === item.label ? 'bg-sky-100' : 'bg-slate-50'}`}
+                      >
+                        <td className="px-2 py-2 font-semibold">
+                          <span
+                            className="mr-2 inline-block h-2.5 w-2.5 rounded-full align-middle"
+                            style={{ backgroundColor: PIE_COLORS[index % PIE_COLORS.length] }}
+                          />
+                          {item.label}
+                        </td>
+                        <td className="px-2 py-2">{item.count}</td>
+                        <td className="px-2 py-2">
+                          {chartTotal ? `${((item.count / chartTotal) * 100).toFixed(1)}%` : '0%'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </section>
         ) : null}
       </div>
     </DashboardLayout>
+  )
+}
+
+const COVERAGE_COLUMN = '__coverage__'
+
+const PIE_COLORS = [
+  '#0ea5e9',
+  '#f43f5e',
+  '#10b981',
+  '#f59e0b',
+  '#8b5cf6',
+  '#ec4899',
+  '#14b8a6',
+  '#6366f1',
+  '#84cc16',
+  '#eab308',
+]
+
+interface PieSlice {
+  label: string
+  count: number
+}
+
+function PieChart({
+  data,
+  selectedLabel,
+  onSelectSlice,
+}: {
+  data: PieSlice[]
+  selectedLabel: string | null
+  onSelectSlice: (label: string | null) => void
+}) {
+  const total = data.reduce((sum, item) => sum + item.count, 0)
+  const radius = 70
+  const strokeWidth = 34
+  const circumference = 2 * Math.PI * radius
+
+  let cumulativeFraction = 0
+
+  return (
+    <svg width={180} height={180} viewBox="0 0 180 180" role="img" aria-label="Interactive pie chart">
+      <g transform="rotate(-90 90 90)">
+        {total === 0 ? (
+          <circle cx={90} cy={90} r={radius} fill="none" stroke="#e2e8f0" strokeWidth={strokeWidth} />
+        ) : (
+          data.map((item, index) => {
+            const fraction = item.count / total
+            const dash = fraction * circumference
+            const gap = circumference - dash
+            const offset = circumference * (1 - cumulativeFraction)
+            cumulativeFraction += fraction
+            const isDimmed = selectedLabel !== null && selectedLabel !== item.label
+            return (
+              <circle
+                key={item.label}
+                cx={90}
+                cy={90}
+                r={radius}
+                fill="none"
+                stroke={PIE_COLORS[index % PIE_COLORS.length]}
+                strokeWidth={strokeWidth}
+                strokeDasharray={`${dash} ${gap}`}
+                strokeDashoffset={offset}
+                opacity={isDimmed ? 0.3 : 1}
+                className="cursor-pointer transition-opacity"
+                onClick={() => onSelectSlice(selectedLabel === item.label ? null : item.label)}
+              >
+                <title>
+                  {item.label}: {item.count} ({((fraction) * 100).toFixed(1)}%)
+                </title>
+              </circle>
+            )
+          })
+        )}
+      </g>
+      <text x={90} y={86} textAnchor="middle" className="fill-slate-700 text-sm font-bold">
+        {total}
+      </text>
+      <text x={90} y={102} textAnchor="middle" className="fill-slate-500 text-[10px] font-semibold">
+        total
+      </text>
+    </svg>
   )
 }

@@ -44,6 +44,8 @@ export function HostMatrixCnamePage() {
   const [result, setResult] = useState<HostnameCnameMatrixResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [selectedHostnames, setSelectedHostnames] = useState<string[]>([])
+  const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({})
+  const [openFilterColumn, setOpenFilterColumn] = useState<string | null>(null)
   const unsubscribeRef = useRef<(() => void) | undefined>(undefined)
 
   useEffect(() => {
@@ -107,21 +109,61 @@ export function HostMatrixCnamePage() {
 
   const hostnameOptions = useMemo(() => (result ? [...result.hostnames].sort() : []), [result])
 
+  const columnValueOptions = useMemo(() => {
+    if (!result) {
+      return {} as Record<string, string[]>
+    }
+    const options: Record<string, string[]> = {}
+    for (const column of result.columns) {
+      const values = new Set<string>()
+      for (const row of result.rows) {
+        values.add(row[column]?.trim() || '(blank)')
+      }
+      options[column] = [...values].sort()
+    }
+    return options
+  }, [result])
+
   const filteredRows = useMemo(() => {
     if (!result) {
       return []
     }
-    if (selectedHostnames.length === 0) {
-      return result.rows
+    let rows = result.rows
+    if (selectedHostnames.length > 0) {
+      const selectedSet = new Set(selectedHostnames)
+      rows = rows.filter((row) => selectedSet.has(row.hostname ?? ''))
     }
-    const selectedSet = new Set(selectedHostnames)
-    return result.rows.filter((row) => selectedSet.has(row.hostname ?? ''))
-  }, [result, selectedHostnames])
+    for (const [column, selectedValues] of Object.entries(columnFilters)) {
+      if (selectedValues.length === 0) {
+        continue
+      }
+      const selectedSet = new Set(selectedValues)
+      rows = rows.filter((row) => selectedSet.has(row[column]?.trim() || '(blank)'))
+    }
+    return rows
+  }, [result, selectedHostnames, columnFilters])
 
   function toggleHostname(hostname: string) {
     setSelectedHostnames((previous) =>
       previous.includes(hostname) ? previous.filter((value) => value !== hostname) : [...previous, hostname],
     )
+  }
+
+  function toggleColumnFilterValue(column: string, value: string) {
+    setColumnFilters((previous) => {
+      const allValues = columnValueOptions[column] ?? []
+      const current = previous[column] ?? allValues
+      const next = current.includes(value) ? current.filter((item) => item !== value) : [...current, value]
+      return { ...previous, [column]: next }
+    })
+  }
+
+  function clearColumnFilter(column: string) {
+    setColumnFilters((previous) => {
+      const next = { ...previous }
+      delete next[column]
+      return next
+    })
   }
 
   return (
@@ -251,11 +293,58 @@ export function HostMatrixCnamePage() {
               <table className="min-w-full border-separate border-spacing-y-2 text-sm">
                 <thead>
                   <tr className="text-left text-slate-500">
-                    {result.columns.map((column) => (
-                      <th key={column} className="px-2 py-1 font-semibold">
-                        {column}
-                      </th>
-                    ))}
+                    {result.columns.map((column) => {
+                      const isFiltered = (columnFilters[column]?.length ?? 0) > 0
+                      return (
+                        <th key={column} className="relative px-2 py-1 font-semibold">
+                          <button
+                            type="button"
+                            onClick={() => setOpenFilterColumn(openFilterColumn === column ? null : column)}
+                            className={`flex items-center gap-1 rounded px-1 py-0.5 hover:bg-slate-100 ${isFiltered ? 'text-sky-700' : ''}`}
+                          >
+                            {column}
+                            <span aria-hidden="true">{isFiltered ? '▾●' : '▾'}</span>
+                          </button>
+                          {openFilterColumn === column ? (
+                            <>
+                              <div className="fixed inset-0 z-10" onClick={() => setOpenFilterColumn(null)} />
+                              <div className="absolute left-0 top-full z-20 mt-1 max-h-72 w-56 overflow-y-auto rounded-lg border border-slate-300 bg-white p-2 text-xs font-normal normal-case text-slate-700 shadow-lg">
+                                <div className="mb-1 flex items-center justify-between gap-2">
+                                  <button
+                                    type="button"
+                                    className="font-semibold text-sky-700 hover:underline"
+                                    onClick={() => clearColumnFilter(column)}
+                                  >
+                                    Select all
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="font-semibold text-slate-500 hover:underline"
+                                    onClick={() => setOpenFilterColumn(null)}
+                                  >
+                                    Close
+                                  </button>
+                                </div>
+                                {(columnValueOptions[column] ?? []).map((value) => {
+                                  const selected = columnFilters[column] ?? []
+                                  const checked = selected.length === 0 || selected.includes(value)
+                                  return (
+                                    <label key={value} className="flex items-center gap-2 py-0.5">
+                                      <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        onChange={() => toggleColumnFilterValue(column, value)}
+                                      />
+                                      <span className="truncate">{value}</span>
+                                    </label>
+                                  )
+                                })}
+                              </div>
+                            </>
+                          ) : null}
+                        </th>
+                      )
+                    })}
                   </tr>
                 </thead>
                 <tbody>

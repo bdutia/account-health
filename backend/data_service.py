@@ -758,6 +758,7 @@ def get_ns_config() -> dict[str, str]:
         "keyname": os.getenv("NS_KEYNAME", ""),
         "key": os.getenv("NS_KEY", ""),
         "cp_code": os.getenv("NS_CP_CODE", ""),
+        "base_path": os.getenv("NS_BASE_PATH", ""),
     }
 
 
@@ -779,17 +780,85 @@ def download_csv_from_netstorage(remote_path: str, local_path: Path, job: Job | 
             f"Missing NetStorage credentials: {', '.join(missing)} (set NS_HOSTNAME/NS_KEYNAME/NS_KEY env vars)"
         )
 
+    debug_context = (
+        f"ns_hostname={cfg['hostname']!r} keyname={cfg['keyname']!r} cp_code={cfg['cp_code']!r} "
+        f"remote_path={remote_path!r} local_path={local_path}"
+    )
+
     if job:
-        job.log(f"Downloading {remote_path} from NetStorage...", percent=20)
+        job.log(f"Downloading {remote_path} from NetStorage... [{debug_context}]", percent=20)
 
     netstorage = Netstorage(cfg["hostname"], cfg["keyname"], cfg["key"])
     local_path.parent.mkdir(parents=True, exist_ok=True)
-    success = netstorage.download(remote_path, str(local_path))
-    if not success:
-        raise ValueError(f"NetStorage download failed for path: {remote_path}")
+
+    try:
+        ok, result = netstorage.download(remote_path, str(local_path))
+    except ValueError:
+        # Some SDK versions return a single value instead of an (ok, response) tuple.
+        try:
+            result = netstorage.download(remote_path, str(local_path))
+            ok = None
+        except Exception as error:
+            raise ValueError(
+                f"NetStorage download raised an error [{debug_context}]: {type(error).__name__}: {error}"
+            ) from error
+    except Exception as error:
+        raise ValueError(
+            f"NetStorage download raised an error [{debug_context}]: {type(error).__name__}: {error}"
+        ) from error
+
+    status_code = getattr(result, "status_code", None)
+    reason = getattr(result, "reason", None)
+    request_url = getattr(result, "url", None)
+    headers = getattr(result, "headers", None)
+
+    body_text: str | None = None
+    text_attr = getattr(result, "text", None)
+    if not callable(text_attr):
+        try:
+            body_text = text_attr
+        except Exception:
+            # The SDK streamed the response body directly to disk, so accessing
+            # .text again raises (e.g. requests.exceptions.StreamConsumedError).
+            body_text = "<response body already consumed by streaming download>"
 
     if job:
-        job.log(f"Downloaded {remote_path} -> {local_path.name}", level="success", percent=45)
+        job.log(
+            f"NetStorage response: ok={ok}, status={status_code}, reason={reason!r}, url={request_url!r}",
+            percent=30,
+        )
+
+    # The SDK's return value can be truthy even on failure (e.g. an HTTP response
+    # object), so verify the file actually landed on disk before trusting it, and
+    # surface as much detail from the response as possible for diagnosis.
+    if not local_path.exists() or local_path.stat().st_size == 0:
+        diagnostics = {
+            "resultType": type(result).__name__,
+            "ok": ok,
+            "statusCode": status_code,
+            "reason": reason,
+            "requestUrl": request_url,
+            "responseHeaders": dict(headers) if headers else None,
+            "responseBodySnippet": body_text[:500] if body_text else None,
+        }
+        diagnostics_str = ", ".join(f"{k}={v!r}" for k, v in diagnostics.items() if v is not None)
+        hint = ""
+        if status_code == 404:
+            hint = " Hint: 404 usually means the remote path or CP code is wrong."
+        elif status_code == 403:
+            hint = " Hint: 403 usually means invalid NetStorage credentials or ACL/upload-dir restriction."
+
+        raise ValueError(
+            f"NetStorage download did not produce a file at {local_path} for remote path {remote_path} "
+            f"[{debug_context}]. Diagnostics: {diagnostics_str or 'no additional response details available'}.{hint}"
+        )
+
+    if job:
+        job.log(
+            f"Downloaded {remote_path} -> {local_path.name} ({local_path.stat().st_size} bytes)",
+            level="success",
+            percent=45,
+        )
 
 
 def resolve_report_csv_path(
@@ -811,13 +880,37 @@ def resolve_report_csv_path(
     if data_mode == "csv_data_remote" and not local_path.exists():
         cfg = get_ns_config()
         cp_code = cfg["cp_code"]
-        remote_path = "/" + "/".join(part for part in [cp_code, *account_relative_path.parts] if part)
+        base_path = cfg["base_path"]
+        if not cp_code and job:
+            job.log(
+                "NS_CP_CODE is not set; the remote path will have no CP-code prefix. "
+                "If NetStorage requires one, set NS_CP_CODE.",
+                level="warning",
+            )
+        if not base_path and job:
+            job.log(
+                "NS_BASE_PATH is not set; the remote path will have no base-path segment. "
+                "If NetStorage requires one, set NS_BASE_PATH.",
+                level="warning",
+            )
+        remote_path = "/" + "/".join(
+            part for part in [cp_code, base_path, *account_relative_path.parts] if part
+        )
+        if job:
+            job.log(
+                f"Attempting NetStorage download: remote_path={remote_path!r}, "
+                f"local_path={local_path}, cp_code={cp_code!r}, base_path={base_path!r}",
+                percent=15,
+            )
         download_csv_from_netstorage(remote_path, local_path, job)
     elif job:
         job.log(f"Using cached CSV at {local_path}", percent=20)
 
     if not local_path.exists():
-        raise FileNotFoundError(f"CSV report not found: {local_path}")
+        raise FileNotFoundError(
+            f"CSV report not found: {local_path} (data_mode={data_mode}, account_dir={account_dir}, "
+            f"relative_path={relative_path})"
+        )
 
     return local_path
 

@@ -862,9 +862,11 @@ def download_csv_from_netstorage(remote_path: str, local_path: Path, job: Job | 
 
 
 def resolve_report_csv_path(
-    account_key: str, data_mode: str, relative_path: Path, job: Job | None = None
+    account_key: str, data_mode: str, relative_path: Path, job: Job | None = None, context: str | None = None
 ) -> Path:
-    """Resolve (and, for remote mode, lazily download/cache) a per-account report CSV path."""
+    """Resolve (and, for remote mode, lazily download/cache) a per-account report CSV path.
+
+    `context`, when provided, overrides the NS_BASE_PATH env var for this request only."""
     if data_mode not in CSV_DATA_MODES:
         raise ValueError(f"Invalid data mode: {data_mode}. Expected one of {sorted(CSV_DATA_MODES)}")
 
@@ -880,7 +882,7 @@ def resolve_report_csv_path(
     if data_mode == "csv_data_remote" and not local_path.exists():
         cfg = get_ns_config()
         cp_code = cfg["cp_code"]
-        base_path = cfg["base_path"]
+        base_path = context if context is not None and context.strip() else cfg["base_path"]
         if not cp_code and job:
             job.log(
                 "NS_CP_CODE is not set; the remote path will have no CP-code prefix. "
@@ -924,7 +926,9 @@ def read_csv_as_json(path: Path) -> tuple[list[str], list[dict[str, str]]]:
     return columns, rows
 
 
-def get_account_hostname_cname_matrix(account_key: str, data_mode: str, job: Job) -> dict[str, Any]:
+def get_account_hostname_cname_matrix(
+    account_key: str, data_mode: str, job: Job, context: str | None = None
+) -> dict[str, Any]:
     """Build the hostname/CNAME matrix for an account from the cname-status.csv report."""
     job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
     mapping = load_account_id_map()
@@ -933,7 +937,7 @@ def get_account_hostname_cname_matrix(account_key: str, data_mode: str, job: Job
         raise ValueError(f"No mapping found for account key: {account_key}")
 
     job.log(f"Resolving cname-status.csv location ({data_mode})...", percent=8)
-    csv_path = resolve_report_csv_path(account_key, data_mode, CNAME_STATUS_RELATIVE_PATH, job)
+    csv_path = resolve_report_csv_path(account_key, data_mode, CNAME_STATUS_RELATIVE_PATH, job, context)
 
     job.log(f"Reading {csv_path.name}...", percent=60)
     columns, rows = read_csv_as_json(csv_path)
@@ -951,6 +955,54 @@ def get_account_hostname_cname_matrix(account_key: str, data_mode: str, job: Job
         "hostnames": hostnames,
         "rows": rows,
         "totals": {"rows": len(rows), "hostnames": len(hostnames)},
+    }
+
+
+def get_account_hostname_cname_matrix_summary(
+    account_key: str, data_mode: str, job: Job, context: str | None = None
+) -> dict[str, Any]:
+    """Summarize the cname-status.csv report: totals plus breakdowns by map/edge/record presence."""
+    job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    job.log(f"Resolving cname-status.csv location ({data_mode})...", percent=8)
+    csv_path = resolve_report_csv_path(account_key, data_mode, CNAME_STATUS_RELATIVE_PATH, job, context)
+
+    job.log(f"Reading {csv_path.name}...", percent=60)
+    _, rows = read_csv_as_json(csv_path)
+
+    job.log("Computing summary breakdowns...", percent=80)
+    total_rows = len(rows)
+    mapped_rows = [row for row in rows if (row.get("edge") or "-") != "-"]
+    unmapped_count = total_rows - len(mapped_rows)
+
+    map_counts: dict[str, int] = {}
+    for row in mapped_rows:
+        map_value = row.get("map") or "unknown"
+        map_counts[map_value] = map_counts.get(map_value, 0) + 1
+
+    hostnames = sorted({row.get("hostname", "") for row in rows if row.get("hostname")})
+
+    job.log("Hostname CNAME matrix summary ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "totals": {
+            "rows": total_rows,
+            "hostnames": len(hostnames),
+            "mapped": len(mapped_rows),
+            "unmapped": unmapped_count,
+        },
+        "mapBreakdown": [
+            {"map": map_value, "count": count}
+            for map_value, count in sorted(map_counts.items(), key=lambda item: item[1], reverse=True)
+        ],
     }
 
 

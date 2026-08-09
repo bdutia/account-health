@@ -1,14 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { DashboardLayout } from '../components/DashboardLayout'
 import {
-  startHostnameCnameMatrixJob,
-  subscribeToHostnameCnameMatrixJob,
+  startHostnameCnameMatrixSummaryJob,
+  subscribeToHostnameCnameMatrixSummaryJob,
 } from '../services/hostnameCnameJobs'
 import type {
   CsvDataMode,
-  HostnameCnameMatrixJobProgressEvent,
-  HostnameCnameMatrixResult,
+  HostnameCnameMatrixSummaryJobProgressEvent,
+  HostnameCnameMatrixSummaryResult,
   JobProgressLevel,
 } from '../types/dashboard'
 
@@ -32,7 +32,7 @@ const DATA_MODE_OPTIONS: Array<{ value: CsvDataMode; label: string }> = [
   { value: 'csv_data_remote', label: 'Remote (NetStorage)' },
 ]
 
-export function HostMatrixCnamePage() {
+export function HostMatrixCnameSummaryPage() {
   const { accountId = '' } = useParams()
   const [searchParams] = useSearchParams()
   const initialDataMode = searchParams.get('data') === 'csv_data_remote' ? 'csv_data_remote' : 'csv_data_local'
@@ -41,9 +41,8 @@ export function HostMatrixCnamePage() {
   const [status, setStatus] = useState<JobStatus>('idle')
   const [percent, setPercent] = useState(0)
   const [logs, setLogs] = useState<LogEntry[]>([])
-  const [result, setResult] = useState<HostnameCnameMatrixResult | null>(null)
+  const [result, setResult] = useState<HostnameCnameMatrixSummaryResult | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [selectedHostnames, setSelectedHostnames] = useState<string[]>([])
   const unsubscribeRef = useRef<(() => void) | undefined>(undefined)
 
   useEffect(() => {
@@ -56,18 +55,17 @@ export function HostMatrixCnamePage() {
       setLogs([])
       setResult(null)
       setError(null)
-      setSelectedHostnames([])
 
       try {
-        const jobId = await startHostnameCnameMatrixJob(accountId, dataMode, context || undefined)
+        const jobId = await startHostnameCnameMatrixSummaryJob(accountId, dataMode, context || undefined)
         if (!isMounted) {
           return
         }
 
-        unsubscribeRef.current = subscribeToHostnameCnameMatrixJob(
+        unsubscribeRef.current = subscribeToHostnameCnameMatrixSummaryJob(
           accountId,
           jobId,
-          (event: HostnameCnameMatrixJobProgressEvent) => {
+          (event: HostnameCnameMatrixSummaryJobProgressEvent) => {
             if (!isMounted) {
               return
             }
@@ -105,27 +103,8 @@ export function HostMatrixCnamePage() {
     }
   }, [accountId, dataMode, context])
 
-  const hostnameOptions = useMemo(() => (result ? [...result.hostnames].sort() : []), [result])
-
-  const filteredRows = useMemo(() => {
-    if (!result) {
-      return []
-    }
-    if (selectedHostnames.length === 0) {
-      return result.rows
-    }
-    const selectedSet = new Set(selectedHostnames)
-    return result.rows.filter((row) => selectedSet.has(row.hostname ?? ''))
-  }, [result, selectedHostnames])
-
-  function toggleHostname(hostname: string) {
-    setSelectedHostnames((previous) =>
-      previous.includes(hostname) ? previous.filter((value) => value !== hostname) : [...previous, hostname],
-    )
-  }
-
   return (
-    <DashboardLayout title="Hostname CNAME Matrix">
+    <DashboardLayout title="Hostname CNAME Matrix Summary">
       <div className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Link className="text-sm font-semibold text-slate-700 underline" to={`/account/${accountId}`}>
@@ -133,9 +112,9 @@ export function HostMatrixCnamePage() {
           </Link>
           <Link
             className="text-sm font-semibold text-sky-700 underline"
-            to={`/account/${accountId}/hostmatrix/cname/summary?data=${dataMode}${context ? `&context=${encodeURIComponent(context)}` : ''}`}
+            to={`/account/${accountId}/hostmatrix/cname?data=${dataMode}${context ? `&context=${encodeURIComponent(context)}` : ''}`}
           >
-            View Summary →
+            View Table →
           </Link>
         </div>
 
@@ -193,79 +172,28 @@ export function HostMatrixCnamePage() {
 
         {result ? (
           <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-card">
-            <div className="mb-4 flex flex-wrap items-center gap-3">
-              <h2 className="text-lg font-bold text-slate-800">Hostname / CNAME Matrix</h2>
-              <div className="flex flex-wrap gap-2 text-xs font-semibold text-slate-700">
-                <span className="rounded-full bg-slate-200 px-3 py-1 text-slate-700">Hostnames: {result.totals.hostnames}</span>
-                <span className="rounded-full bg-slate-800 px-3 py-1 text-white">Rows: {result.totals.rows}</span>
-              </div>
+            <h2 className="mb-4 text-lg font-bold text-slate-800">Summary</h2>
+            <div className="mb-6 flex flex-wrap gap-3 text-sm font-semibold text-slate-700">
+              <span className="rounded-full bg-slate-800 px-3 py-1 text-white">Rows: {result.totals.rows}</span>
+              <span className="rounded-full bg-slate-200 px-3 py-1 text-slate-700">Hostnames: {result.totals.hostnames}</span>
+              <span className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-700">Mapped: {result.totals.mapped}</span>
+              <span className="rounded-full bg-rose-100 px-3 py-1 text-rose-700">Unmapped: {result.totals.unmapped}</span>
             </div>
 
-            <div className="mb-4 flex flex-wrap items-start gap-3">
-              <div className="flex flex-col gap-1">
-                <span className="text-sm font-semibold text-slate-700">Filter Hostnames (multi-select):</span>
-                <select
-                  multiple
-                  className="min-w-[16rem] rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-normal"
-                  size={Math.min(8, Math.max(4, hostnameOptions.length))}
-                  value={selectedHostnames}
-                  onChange={(event) => {
-                    const values = Array.from(event.target.selectedOptions, (option) => option.value)
-                    setSelectedHostnames(values)
-                  }}
-                >
-                  {hostnameOptions.map((hostname) => (
-                    <option key={hostname} value={hostname}>
-                      {hostname}
-                    </option>
-                  ))}
-                </select>
-                {selectedHostnames.length > 0 ? (
-                  <div className="flex flex-wrap gap-1.5">
-                    {selectedHostnames.map((hostname) => (
-                      <button
-                        key={hostname}
-                        type="button"
-                        onClick={() => toggleHostname(hostname)}
-                        className="rounded-full bg-sky-100 px-2 py-1 text-xs font-semibold text-sky-700 hover:bg-sky-200"
-                      >
-                        {hostname} ✕
-                      </button>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() => setSelectedHostnames([])}
-                      className="rounded-full bg-slate-200 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-300"
-                    >
-                      Clear all
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-              <span className="mt-6 text-xs font-semibold text-slate-500">
-                {filteredRows.length} of {result.rows.length} rows
-              </span>
-            </div>
-
+            <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-slate-500">Breakdown by Map</h3>
             <div className="overflow-x-auto">
               <table className="min-w-full border-separate border-spacing-y-2 text-sm">
                 <thead>
                   <tr className="text-left text-slate-500">
-                    {result.columns.map((column) => (
-                      <th key={column} className="px-2 py-1 font-semibold">
-                        {column}
-                      </th>
-                    ))}
+                    <th className="px-2 py-1 font-semibold">Map</th>
+                    <th className="px-2 py-1 font-semibold">Count</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredRows.map((row, index) => (
-                    <tr key={`${row.hostname}-${index}`} className="rounded-lg bg-slate-50 text-slate-700">
-                      {result.columns.map((column) => (
-                        <td key={column} className="px-2 py-2">
-                          {row[column] || '-'}
-                        </td>
-                      ))}
+                  {result.mapBreakdown.map((item) => (
+                    <tr key={item.map} className="rounded-lg bg-slate-50 text-slate-700">
+                      <td className="px-2 py-2 font-semibold">{item.map}</td>
+                      <td className="px-2 py-2">{item.count}</td>
                     </tr>
                   ))}
                 </tbody>

@@ -12,6 +12,7 @@ from backend.data_service import (
     get_account_hostname_coverage,
     get_account_hostname_cname_coverage,
     get_account_hostname_cname_matrix,
+    get_account_hostname_cname_matrix_summary,
     get_account_dashboard_data,
     get_summary_dashboard_data,
     get_summary_dashboard_debug,
@@ -110,16 +111,38 @@ def stream_hostname_cname_coverage_job(account_key: str, job_id: str) -> Streami
 def start_hostname_cname_matrix_job(
     account_key: str,
     data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    context: str | None = Query(None),
 ) -> dict[str, object]:
     job = job_manager.create()
     job_manager.run_in_background(
-        job, lambda active_job: get_account_hostname_cname_matrix(account_key, data, active_job)
+        job, lambda active_job: get_account_hostname_cname_matrix(account_key, data, active_job, context)
     )
     return {'jobId': job.job_id}
 
 
 @app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/hostMatrix/cname/jobs/{{job_id}}/events')
 def stream_hostname_cname_matrix_job(account_key: str, job_id: str) -> StreamingResponse:
+    job = job_manager.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail='Job not found')
+    return _job_event_stream(job)
+
+
+@app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/hostMatrix/cname/summary/jobs')
+def start_hostname_cname_matrix_summary_job(
+    account_key: str,
+    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    context: str | None = Query(None),
+) -> dict[str, object]:
+    job = job_manager.create()
+    job_manager.run_in_background(
+        job, lambda active_job: get_account_hostname_cname_matrix_summary(account_key, data, active_job, context)
+    )
+    return {'jobId': job.job_id}
+
+
+@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/hostMatrix/cname/summary/jobs/{{job_id}}/events')
+def stream_hostname_cname_matrix_summary_job(account_key: str, job_id: str) -> StreamingResponse:
     job = job_manager.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail='Job not found')

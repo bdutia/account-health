@@ -130,6 +130,32 @@ export type HostnameCnameMatrixJobProgressEvent =
   | { type: 'completed'; percent: number; result: HostnameCnameMatrixResult; timestamp: number }
   | { type: 'failed'; message: string; timestamp: number }
 
+export interface HostnameCnameMatrixSummaryTotals {
+  rows: number
+  hostnames: number
+  mapped: number
+  unmapped: number
+}
+
+export interface HostnameCnameMatrixMapBreakdownItem {
+  map: string
+  count: number
+}
+
+export interface HostnameCnameMatrixSummaryResult {
+  accountKey: string
+  accountName: string
+  accountId: string
+  dataMode: CsvDataMode
+  totals: HostnameCnameMatrixSummaryTotals
+  mapBreakdown: HostnameCnameMatrixMapBreakdownItem[]
+}
+
+export type HostnameCnameMatrixSummaryJobProgressEvent =
+  | { type: 'progress'; message: string; level: JobProgressLevel; percent: number; timestamp: number }
+  | { type: 'completed'; percent: number; result: HostnameCnameMatrixSummaryResult; timestamp: number }
+  | { type: 'failed'; message: string; timestamp: number }
+
 export interface AccountDetail {
   accountId: string
   name: string

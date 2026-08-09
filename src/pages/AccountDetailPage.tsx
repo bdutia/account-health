@@ -142,9 +142,15 @@ export function AccountDetailPage() {
           </Link>
           <Link
             className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
-            to={`/account/${accountId}/hostmatrix-cname`}
+            to={`/account/${accountId}/hostmatrix/cname`}
           >
             View Hostname CNAME Matrix →
+          </Link>
+          <Link
+            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/hostmatrix/cname/summary`}
+          >
+            View Hostname CNAME Matrix Summary →
           </Link>
 
           {!hostnameCoverage ? (

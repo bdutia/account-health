@@ -1,4 +1,9 @@
-import type { CsvDataMode, HostnameCnameMatrixJobProgressEvent, JobProgressEvent } from '../types/dashboard'
+import type {
+  CsvDataMode,
+  HostnameCnameMatrixJobProgressEvent,
+  HostnameCnameMatrixSummaryJobProgressEvent,
+  JobProgressEvent,
+} from '../types/dashboard'
 
 const DEFAULT_API_BASE_URL = `${import.meta.env.BASE_URL}api`.replace(/\/$/, '')
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE_URL
@@ -40,9 +45,17 @@ export function subscribeToHostnameCnameCoverageJob(
   return () => source.close()
 }
 
-export async function startHostnameCnameMatrixJob(accountKey: string, dataMode: CsvDataMode): Promise<string> {
+export async function startHostnameCnameMatrixJob(
+  accountKey: string,
+  dataMode: CsvDataMode,
+  context?: string,
+): Promise<string> {
+  const params = new URLSearchParams({ data: dataMode })
+  if (context) {
+    params.set('context', context)
+  }
   const response = await fetch(
-    `${API_BASE_URL}/api/dashboard/account/${accountKey}/hostMatrix/cname/jobs?data=${dataMode}`,
+    `${API_BASE_URL}/api/dashboard/account/${accountKey}/hostMatrix/cname/jobs?${params.toString()}`,
     { method: 'POST' },
   )
   if (!response.ok) {
@@ -64,6 +77,51 @@ export function subscribeToHostnameCnameMatrixJob(
 
   source.onmessage = (message) => {
     const event = JSON.parse(message.data) as HostnameCnameMatrixJobProgressEvent
+    onEvent(event)
+    if (event.type === 'completed' || event.type === 'failed') {
+      source.close()
+    }
+  }
+
+  source.onerror = () => {
+    source.close()
+  }
+
+  return () => source.close()
+}
+
+export async function startHostnameCnameMatrixSummaryJob(
+  accountKey: string,
+  dataMode: CsvDataMode,
+  context?: string,
+): Promise<string> {
+  const params = new URLSearchParams({ data: dataMode })
+  if (context) {
+    params.set('context', context)
+  }
+  const response = await fetch(
+    `${API_BASE_URL}/api/dashboard/account/${accountKey}/hostMatrix/cname/summary/jobs?${params.toString()}`,
+    { method: 'POST' },
+  )
+  if (!response.ok) {
+    throw new Error(`Failed to start hostname CNAME matrix summary job: ${response.status}`)
+  }
+
+  const payload = (await response.json()) as { jobId: string }
+  return payload.jobId
+}
+
+export function subscribeToHostnameCnameMatrixSummaryJob(
+  accountKey: string,
+  jobId: string,
+  onEvent: (event: HostnameCnameMatrixSummaryJobProgressEvent) => void,
+): () => void {
+  const source = new EventSource(
+    `${API_BASE_URL}/api/dashboard/account/${accountKey}/hostMatrix/cname/summary/jobs/${jobId}/events`,
+  )
+
+  source.onmessage = (message) => {
+    const event = JSON.parse(message.data) as HostnameCnameMatrixSummaryJobProgressEvent
     onEvent(event)
     if (event.type === 'completed' || event.type === 'failed') {
       source.close()

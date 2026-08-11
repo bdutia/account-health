@@ -403,6 +403,73 @@ export interface PerfMatrixScoreCardResult {
   hostnames: PerfMatrixScoreCardHostnameEntry[]
 }
 
+export interface PerfMatrixTopNTotals {
+  hostnames: number
+  topN: number
+  available: number
+  unavailable: number
+}
+
+export interface PerfMatrixTopNResult {
+  accountKey: string
+  accountName: string
+  accountId: string
+  dataMode: CsvDataMode
+  columns: string[]
+  baseColumns: string[]
+  metricColumns: string[]
+  hostnames: string[]
+  rows: Array<Record<string, string>>
+  series: Record<string, PerfMatrixHistoryPoint[]>
+  totals: PerfMatrixTopNTotals
+}
+
+export type PerfMatrixTopNJobProgressEvent =
+  | { type: 'progress'; message: string; level: JobProgressLevel; percent: number; timestamp: number }
+  | { type: 'completed'; percent: number; result: PerfMatrixTopNResult; timestamp: number }
+  | { type: 'failed'; message: string; timestamp: number }
+
+export interface PerfMatrixTopNSummaryTotals {
+  hostnames: number
+  topN: number
+  available: number
+  unavailable: number
+  lcpMsAvg: number | null
+  inpMsAvg: number | null
+  clsAvg: number | null
+}
+
+export interface PerfMatrixTopNSummaryResult {
+  accountKey: string
+  accountName: string
+  accountId: string
+  dataMode: CsvDataMode
+  totals: PerfMatrixTopNSummaryTotals
+  breakdowns: Record<string, PerfMatrixBreakdownItem[]>
+  series: Record<string, PerfMatrixHistoryPoint[]>
+}
+
+export type PerfMatrixTopNSummaryJobProgressEvent =
+  | { type: 'progress'; message: string; level: JobProgressLevel; percent: number; timestamp: number }
+  | { type: 'completed'; percent: number; result: PerfMatrixTopNSummaryResult; timestamp: number }
+  | { type: 'failed'; message: string; timestamp: number }
+
+export interface PerfMatrixTopNScoreCardResult {
+  accountKey: string
+  accountName: string
+  accountId: string
+  dataMode: CsvDataMode
+  totals: {
+    hostnames: number
+    corewebvitals: {
+      lcpMsAvg: number | null
+      inpMsAvg: number | null
+      clsAvg: number | null
+    }
+  }
+  hostnames: PerfMatrixScoreCardHostnameEntry[]
+}
+
 export interface AccountDetail {
   accountId: string
   name: string

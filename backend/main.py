@@ -22,6 +22,9 @@ from backend.data_service import (
     get_account_perf_matrix,
     get_account_perf_matrix_summary,
     get_account_perf_matrix_scorecard,
+    get_account_perf_matrix_topn,
+    get_account_perf_matrix_topn_summary,
+    get_account_perf_matrix_topn_scorecard,
     get_account_dashboard_data,
     get_summary_dashboard_data,
     get_summary_dashboard_debug,
@@ -378,6 +381,76 @@ def perf_matrix_scorecard_json(
     """Synchronous scoreCard endpoint: totals/hostnames JSON, no job/SSE wrapper."""
     try:
         return get_account_perf_matrix_scorecard(account_key, data, None, context)
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error))
+
+
+@app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/perfMatrixTopN/jobs')
+def start_perf_matrix_topn_job(
+    account_key: str,
+    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    context: str | None = Query(None),
+) -> dict[str, object]:
+    job = job_manager.create()
+    job_manager.run_in_background(
+        job, lambda active_job: get_account_perf_matrix_topn(account_key, data, active_job, context)
+    )
+    return {'jobId': job.job_id}
+
+
+@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/perfMatrixTopN/jobs/{{job_id}}/events')
+def stream_perf_matrix_topn_job(account_key: str, job_id: str) -> StreamingResponse:
+    job = job_manager.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail='Job not found')
+    return _job_event_stream(job)
+
+
+@app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/perfMatrixTopN/summary/jobs')
+def start_perf_matrix_topn_summary_job(
+    account_key: str,
+    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    context: str | None = Query(None),
+) -> dict[str, object]:
+    job = job_manager.create()
+    job_manager.run_in_background(
+        job, lambda active_job: get_account_perf_matrix_topn_summary(account_key, data, active_job, context)
+    )
+    return {'jobId': job.job_id}
+
+
+@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/perfMatrixTopN/summary/jobs/{{job_id}}/events')
+def stream_perf_matrix_topn_summary_job(account_key: str, job_id: str) -> StreamingResponse:
+    job = job_manager.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail='Job not found')
+    return _job_event_stream(job)
+
+
+@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/perfMatrixTopN/summary')
+def perf_matrix_topn_summary_json(
+    account_key: str,
+    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    context: str | None = Query(None),
+    jsonOut: bool = Query(True),
+) -> dict[str, object]:
+    """Synchronous summary endpoint (no job/SSE wrapper) for other components to consume directly."""
+    try:
+        return get_account_perf_matrix_topn_summary(account_key, data, None, context)
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error))
+
+
+@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/perfMatrixTopN/scoreCard')
+def perf_matrix_topn_scorecard_json(
+    account_key: str,
+    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    context: str | None = Query(None),
+    jsonOut: bool = Query(True),
+) -> dict[str, object]:
+    """Synchronous scoreCard endpoint: totals/hostnames JSON, no job/SSE wrapper."""
+    try:
+        return get_account_perf_matrix_topn_scorecard(account_key, data, None, context)
     except Exception as error:
         raise HTTPException(status_code=500, detail=str(error))
 

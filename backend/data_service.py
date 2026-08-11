@@ -1416,12 +1416,22 @@ def fetch_pagespeed_insights(session: requests.Session, hostname: str, api_key: 
     return session.get(url, params=params, timeout=90)
 
 
+def _coerce_metric_value(value: Any) -> float | None:
+    """CrUX returns most percentiles as numbers, but CLS as a string (e.g. "0.05") - normalize both."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def extract_current_cwv_from_crux(record: dict[str, Any]) -> dict[str, float | None]:
     metrics = record.get("metrics", {})
     return {
-        "lcpMs": metrics.get("largest_contentful_paint", {}).get("percentiles", {}).get("p75"),
-        "inpMs": metrics.get("interaction_to_next_paint", {}).get("percentiles", {}).get("p75"),
-        "cls": metrics.get("cumulative_layout_shift", {}).get("percentiles", {}).get("p75"),
+        "lcpMs": _coerce_metric_value(metrics.get("largest_contentful_paint", {}).get("percentiles", {}).get("p75")),
+        "inpMs": _coerce_metric_value(metrics.get("interaction_to_next_paint", {}).get("percentiles", {}).get("p75")),
+        "cls": _coerce_metric_value(metrics.get("cumulative_layout_shift", {}).get("percentiles", {}).get("p75")),
     }
 
 
@@ -1441,9 +1451,9 @@ def extract_cwv_history_from_crux(record: dict[str, Any]) -> list[dict[str, Any]
         history.append(
             {
                 "period": label,
-                "lcpMs": lcp_series[index] if index < len(lcp_series) else None,
-                "inpMs": inp_series[index] if index < len(inp_series) else None,
-                "cls": cls_series[index] if index < len(cls_series) else None,
+                "lcpMs": _coerce_metric_value(lcp_series[index]) if index < len(lcp_series) else None,
+                "inpMs": _coerce_metric_value(inp_series[index]) if index < len(inp_series) else None,
+                "cls": _coerce_metric_value(cls_series[index]) if index < len(cls_series) else None,
             }
         )
     return history
@@ -1496,10 +1506,10 @@ def get_hostname_core_web_vitals(session: requests.Session, hostname: str, api_k
 
         if psi_response is not None and psi_response.status_code == 200:
             audits = psi_response.json().get("lighthouseResult", {}).get("audits", {})
-            result["lcpMs"] = audits.get("largest-contentful-paint", {}).get("numericValue")
-            result["cls"] = audits.get("cumulative-layout-shift", {}).get("numericValue")
+            result["lcpMs"] = _coerce_metric_value(audits.get("largest-contentful-paint", {}).get("numericValue"))
+            result["cls"] = _coerce_metric_value(audits.get("cumulative-layout-shift", {}).get("numericValue"))
             # PSI lab runs have no INP equivalent; Total Blocking Time is the closest lab proxy.
-            result["inpMs"] = audits.get("total-blocking-time", {}).get("numericValue")
+            result["inpMs"] = _coerce_metric_value(audits.get("total-blocking-time", {}).get("numericValue"))
             result["source"] = "pagespeed"
             result["available"] = True
         elif not result["error"]:
@@ -1511,6 +1521,61 @@ def get_hostname_core_web_vitals(session: requests.Session, hostname: str, api_k
     result["inpRating"] = classify_cwv("inpMs", result["inpMs"])
     result["clsRating"] = classify_cwv("cls", result["cls"])
     return result
+
+
+def _fetch_core_web_vitals_for_hostnames(
+    hostnames: list[str], job: Job | None = None, start_percent: int = 15, end_percent: int = 85
+) -> dict[str, dict[str, Any]]:
+    """Shared helper: fetch CrUX/PSI Core Web Vitals concurrently for a fixed list of hostnames."""
+    cfg = get_crux_config()
+    if job and not cfg["api_key"]:
+        job.log(
+            "CRUX_API_KEY is not set in .env.server; Core Web Vitals will be unavailable for all hostnames",
+            level="warning",
+            percent=start_percent,
+        )
+
+    session = requests.Session()
+    perf_by_hostname: dict[str, dict[str, Any]] = {}
+    completed = 0
+    total = len(hostnames) or 1
+    percent_span = max(end_percent - start_percent, 0)
+
+    with ThreadPoolExecutor(max_workers=PERF_MATRIX_WORKER_COUNT) as executor:
+        futures = {
+            executor.submit(get_hostname_core_web_vitals, session, hostname, cfg["api_key"]): hostname
+            for hostname in hostnames
+        }
+        for future in as_completed(futures):
+            hostname = futures[future]
+            try:
+                perf = future.result()
+            except Exception as error:
+                perf = {
+                    "hostname": hostname,
+                    "source": None,
+                    "available": False,
+                    "lcpMs": None,
+                    "inpMs": None,
+                    "cls": None,
+                    "lcpRating": None,
+                    "inpRating": None,
+                    "clsRating": None,
+                    "history": [],
+                    "error": str(error),
+                }
+            perf_by_hostname[hostname] = perf
+            completed += 1
+            if job:
+                percent = start_percent + int(percent_span * completed / total)
+                status = "available" if perf["available"] else f"unavailable ({perf.get('error') or 'no data'})"
+                job.log(
+                    f"[{completed}/{total}] {hostname}: {status}",
+                    level="success" if perf["available"] else "warning",
+                    percent=percent,
+                )
+
+    return perf_by_hostname
 
 
 def _collect_account_perf_data(
@@ -1542,52 +1607,7 @@ def _collect_account_perf_data(
             percent=12,
         )
 
-    cfg = get_crux_config()
-    if job and not cfg["api_key"]:
-        job.log(
-            "CRUX_API_KEY is not set in .env.server; Core Web Vitals will be unavailable for all hostnames",
-            level="warning",
-            percent=14,
-        )
-
-    session = requests.Session()
-    perf_by_hostname: dict[str, dict[str, Any]] = {}
-    completed = 0
-    total = len(processed_hostnames) or 1
-
-    with ThreadPoolExecutor(max_workers=PERF_MATRIX_WORKER_COUNT) as executor:
-        futures = {
-            executor.submit(get_hostname_core_web_vitals, session, hostname, cfg["api_key"]): hostname
-            for hostname in processed_hostnames
-        }
-        for future in as_completed(futures):
-            hostname = futures[future]
-            try:
-                perf = future.result()
-            except Exception as error:
-                perf = {
-                    "hostname": hostname,
-                    "source": None,
-                    "available": False,
-                    "lcpMs": None,
-                    "inpMs": None,
-                    "cls": None,
-                    "lcpRating": None,
-                    "inpRating": None,
-                    "clsRating": None,
-                    "history": [],
-                    "error": str(error),
-                }
-            perf_by_hostname[hostname] = perf
-            completed += 1
-            if job:
-                percent = 15 + int(70 * completed / total)
-                status = "available" if perf["available"] else f"unavailable ({perf.get('error') or 'no data'})"
-                job.log(
-                    f"[{completed}/{total}] {hostname}: {status}",
-                    level="success" if perf["available"] else "warning",
-                    percent=percent,
-                )
+    perf_by_hostname = _fetch_core_web_vitals_for_hostnames(processed_hostnames, job)
 
     return {
         "account_metadata": account_metadata,
@@ -1604,6 +1624,7 @@ def _format_metric_value(value: float | None) -> str:
 
 
 PERF_MATRIX_METRIC_COLUMNS = ["source", "lcpMs", "inpMs", "cls", "lcpRating", "inpRating", "clsRating"]
+PERF_MATRIX_TOPN_COUNT = int(os.getenv("PERF_MATRIX_TOPN_COUNT") or 10)
 
 
 def get_account_perf_matrix(
@@ -1772,7 +1793,230 @@ def get_account_perf_matrix_scorecard(
     }
 
 
-def get_google_config() -> dict[str, str | None]:
+# ----------------------------------------------------------------------------
+# perfMatrixTopN: same Core Web Vitals pipeline as perfMatrix, but scoped to only
+# the top N hostnames by edgeHits from traffic-report-hits-by-hostname.csv, since
+# live CrUX/PageSpeed lookups are too costly to run across every hostname.
+# ----------------------------------------------------------------------------
+
+
+def _collect_account_perf_topn_data(
+    account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
+) -> dict[str, Any]:
+    """Shared helper: pick the top N hostnames by edgeHits from traffic-report-hits-by-hostname.csv
+    and fetch CrUX/PSI Core Web Vitals only for those."""
+    if job:
+        job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    if job:
+        job.log(f"Resolving traffic-report-hits-by-hostname.csv location ({data_mode})...", percent=5)
+    csv_path = resolve_report_csv_path(account_key, data_mode, TRAFFIC_REPORT_RELATIVE_PATH, job, context)
+
+    if job:
+        job.log(f"Reading {csv_path.name}...", percent=10)
+    columns, rows = read_csv_as_json(csv_path)
+    edge_hits_column = next((column for column in columns if column.strip().lower().startswith("edgehits")), None)
+
+    seen_hostnames: set[str] = set()
+    unique_rows: list[dict[str, str]] = []
+    for row in rows:
+        hostname = row.get("hostname", "")
+        if not hostname or hostname in seen_hostnames:
+            continue
+        seen_hostnames.add(hostname)
+        unique_rows.append(row)
+
+    sort_key = (lambda row: to_float(row.get(edge_hits_column))) if edge_hits_column else (lambda row: 0.0)
+    top_rows = sorted(unique_rows, key=sort_key, reverse=True)[:PERF_MATRIX_TOPN_COUNT]
+    top_hostnames = [row.get("hostname", "") for row in top_rows]
+
+    if job:
+        job.log(
+            f"Selected top {len(top_hostnames)} of {len(unique_rows)} hostnames by edgeHits for "
+            "live CrUX/PageSpeed lookups (see PERF_MATRIX_TOPN_COUNT)",
+            percent=12,
+        )
+
+    perf_by_hostname = _fetch_core_web_vitals_for_hostnames(top_hostnames, job)
+
+    return {
+        "account_metadata": account_metadata,
+        "columns": columns,
+        "top_rows": top_rows,
+        "hostnames": top_hostnames,
+        "total_hostnames": len(unique_rows),
+        "perf_by_hostname": perf_by_hostname,
+    }
+
+
+def get_account_perf_matrix_topn(
+    account_key: str, data_mode: str, job: Job, context: str | None = None
+) -> dict[str, Any]:
+    """Build the Core Web Vitals table for only the top-N-by-traffic hostnames."""
+    collected = _collect_account_perf_topn_data(account_key, data_mode, job, context)
+    account_metadata = collected["account_metadata"]
+    columns = collected["columns"]
+    perf_by_hostname = collected["perf_by_hostname"]
+
+    rows_out: list[dict[str, str]] = []
+    for row in collected["top_rows"]:
+        perf = perf_by_hostname.get(row.get("hostname", ""))
+        enriched = dict(row)
+        if perf:
+            enriched.update(
+                {
+                    "source": perf["source"] or "",
+                    "lcpMs": _format_metric_value(perf["lcpMs"]),
+                    "inpMs": _format_metric_value(perf["inpMs"]),
+                    "cls": _format_metric_value(perf["cls"]),
+                    "lcpRating": perf["lcpRating"] or "",
+                    "inpRating": perf["inpRating"] or "",
+                    "clsRating": perf["clsRating"] or "",
+                }
+            )
+        else:
+            enriched.update({column: "" for column in PERF_MATRIX_METRIC_COLUMNS})
+        rows_out.append(enriched)
+
+    series = {hostname: perf["history"] for hostname, perf in perf_by_hostname.items()}
+    available_count = sum(1 for perf in perf_by_hostname.values() if perf["available"])
+
+    job.log("Perf matrix (Top N) ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "columns": columns + PERF_MATRIX_METRIC_COLUMNS,
+        "baseColumns": columns,
+        "metricColumns": PERF_MATRIX_METRIC_COLUMNS,
+        "hostnames": collected["hostnames"],
+        "rows": rows_out,
+        "series": series,
+        "totals": {
+            "hostnames": collected["total_hostnames"],
+            "topN": len(collected["hostnames"]),
+            "available": available_count,
+            "unavailable": len(collected["hostnames"]) - available_count,
+        },
+    }
+
+
+def get_account_perf_matrix_topn_summary(
+    account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
+) -> dict[str, Any]:
+    """Summarize Core Web Vitals for the top-N-by-traffic hostnames: availability + rating breakdowns."""
+    collected = _collect_account_perf_topn_data(account_key, data_mode, job, context)
+    account_metadata = collected["account_metadata"]
+    perf_by_hostname = collected["perf_by_hostname"]
+    perf_values = list(perf_by_hostname.values())
+
+    if job:
+        job.log("Computing Core Web Vitals summary...", percent=90)
+
+    available = [perf for perf in perf_values if perf["available"]]
+
+    def average(metric_key: str) -> float | None:
+        values = [perf[metric_key] for perf in available if perf.get(metric_key) is not None]
+        return round(sum(values) / len(values), 2) if values else None
+
+    totals = {
+        "hostnames": collected["total_hostnames"],
+        "topN": len(collected["hostnames"]),
+        "available": len(available),
+        "unavailable": len(perf_values) - len(available),
+        "lcpMsAvg": average("lcpMs"),
+        "inpMsAvg": average("inpMs"),
+        "clsAvg": average("cls"),
+    }
+
+    rating_labels = ["good", "needs-improvement", "poor"]
+    breakdowns: dict[str, list[dict[str, Any]]] = {}
+    for metric_key, rating_key in (("lcpMs", "lcpRating"), ("inpMs", "inpRating"), ("cls", "clsRating")):
+        counts = {label: 0 for label in rating_labels}
+        unavailable_count = 0
+        for perf in perf_values:
+            rating = perf.get(rating_key)
+            if rating in counts:
+                counts[rating] += 1
+            else:
+                unavailable_count += 1
+        breakdown = [{"value": label, "count": counts[label]} for label in rating_labels]
+        if unavailable_count:
+            breakdown.append({"value": "unavailable", "count": unavailable_count})
+        breakdowns[metric_key] = breakdown
+
+    series = {hostname: perf["history"] for hostname, perf in perf_by_hostname.items()}
+
+    if job:
+        job.log("Perf matrix (Top N) summary ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "totals": totals,
+        "breakdowns": breakdowns,
+        "series": series,
+    }
+
+
+def get_account_perf_matrix_topn_scorecard(
+    account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
+) -> dict[str, Any]:
+    """Build the perfMatrixTopN scoreCard JSON: averaged + per-hostname Core Web Vitals for the top-N hostnames."""
+    collected = _collect_account_perf_topn_data(account_key, data_mode, job, context)
+    account_metadata = collected["account_metadata"]
+    perf_by_hostname = collected["perf_by_hostname"]
+    available = [perf for perf in perf_by_hostname.values() if perf["available"]]
+
+    if job:
+        job.log("Building scoreCard...", percent=90)
+
+    def average(metric_key: str) -> float | None:
+        values = [perf[metric_key] for perf in available if perf.get(metric_key) is not None]
+        return round(sum(values) / len(values), 2) if values else None
+
+    hostname_entries = [
+        {
+            "hostname": hostname,
+            "corewebvitals": {
+                "lcpMs": perf["lcpMs"],
+                "inpMs": perf["inpMs"],
+                "cls": perf["cls"],
+                "lcpRating": perf["lcpRating"],
+                "inpRating": perf["inpRating"],
+                "clsRating": perf["clsRating"],
+                "source": perf["source"],
+            },
+        }
+        for hostname, perf in perf_by_hostname.items()
+    ]
+
+    if job:
+        job.log("Perf matrix (Top N) scoreCard ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "totals": {
+            "hostnames": len(collected["hostnames"]),
+            "corewebvitals": {
+                "lcpMsAvg": average("lcpMs"),
+                "inpMsAvg": average("inpMs"),
+                "clsAvg": average("cls"),
+            },
+        },
+        "hostnames": hostname_entries,
+    }
     return {
         "spreadsheet_id": os.getenv("GOOGLE_SHEETS_SPREADSHEET_ID"),
         "summary_metrics_range": os.getenv("GOOGLE_SHEETS_SUMMARY_METRICS_RANGE") or "SummaryMetrics!A:E",

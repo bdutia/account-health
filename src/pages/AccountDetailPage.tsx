@@ -206,6 +206,24 @@ export function AccountDetailPage() {
           >
             View Performance Matrix ScoreCard →
           </Link>
+          <Link
+            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/perfMatrixTopN`}
+          >
+            View Performance Matrix (Top 10) →
+          </Link>
+          <Link
+            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/perfMatrixTopN/summary`}
+          >
+            View Performance Matrix (Top 10) Summary →
+          </Link>
+          <Link
+            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/perfMatrixTopN/scoreCard`}
+          >
+            View Performance Matrix (Top 10) ScoreCard →
+          </Link>
 
           {!hostnameCoverage ? (
             <p className="text-sm text-slate-600">

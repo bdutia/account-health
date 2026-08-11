@@ -1190,6 +1190,167 @@ def get_account_feature_matrix_scorecard(
     }
 
 
+TRAFFIC_REPORT_RELATIVE_PATH = Path("REPORTS") / "CSVDATA" / "traffic-report-hits-by-hostname.csv"
+
+# Raw CSV header -> short metric key used in totals/scoreCard output.
+TRAFFIC_MATRIX_METRIC_KEYS = {
+    "edgeHits (7days)": "edgeHits",
+    "originHits (7days)": "originHits",
+    "edgeBytes (7days)": "edgeBytes",
+    "originBytes (7days)": "originBytes",
+    "hitsOffload (7days)": "hitsOffload",
+    "bytesOffload (7days)": "bytesOffload",
+}
+
+
+def to_float(raw_value: str | None) -> float:
+    try:
+        return float(raw_value) if raw_value not in (None, "") else 0.0
+    except ValueError:
+        return 0.0
+
+
+def get_account_traffic_matrix(
+    account_key: str, data_mode: str, job: Job, context: str | None = None
+) -> dict[str, Any]:
+    """Build the hostname traffic matrix for an account from the traffic-report-hits-by-hostname.csv report."""
+    job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    job.log(f"Resolving traffic-report-hits-by-hostname.csv location ({data_mode})...", percent=8)
+    csv_path = resolve_report_csv_path(account_key, data_mode, TRAFFIC_REPORT_RELATIVE_PATH, job, context)
+
+    job.log(f"Reading {csv_path.name}...", percent=60)
+    columns, rows = read_csv_as_json(csv_path)
+    metric_columns = [column for column in columns if column in TRAFFIC_MATRIX_METRIC_KEYS]
+    base_columns = [column for column in columns if column not in TRAFFIC_MATRIX_METRIC_KEYS]
+    hostnames = sorted({row.get("hostname", "") for row in rows if row.get("hostname")})
+
+    job.log("Traffic matrix ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "columns": columns,
+        "baseColumns": base_columns,
+        "metricColumns": metric_columns,
+        "hostnames": hostnames,
+        "rows": rows,
+        "totals": {"rows": len(rows), "hostnames": len(hostnames)},
+    }
+
+
+def get_account_traffic_matrix_summary(
+    account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
+) -> dict[str, Any]:
+    """Summarize traffic-report-hits-by-hostname.csv: totals per metric plus top-hostname breakdowns."""
+    if job:
+        job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    if job:
+        job.log(f"Resolving traffic-report-hits-by-hostname.csv location ({data_mode})...", percent=8)
+    csv_path = resolve_report_csv_path(account_key, data_mode, TRAFFIC_REPORT_RELATIVE_PATH, job, context)
+
+    if job:
+        job.log(f"Reading {csv_path.name}...", percent=60)
+    columns, rows = read_csv_as_json(csv_path)
+    metric_columns = [column for column in columns if column in TRAFFIC_MATRIX_METRIC_KEYS]
+    hostnames = sorted({row.get("hostname", "") for row in rows if row.get("hostname")})
+
+    if job:
+        job.log("Computing traffic totals and breakdowns...", percent=80)
+    totals: dict[str, Any] = {"hostnames": len(hostnames)}
+    breakdowns: dict[str, list[dict[str, Any]]] = {}
+    for column in metric_columns:
+        metric_key = TRAFFIC_MATRIX_METRIC_KEYS[column]
+        values = [(row.get("hostname", ""), to_float(row.get(column))) for row in rows]
+        totals[metric_key] = sum(value for _, value in values)
+
+        top_values = sorted(values, key=lambda item: item[1], reverse=True)[:10]
+        other_total = sum(value for _, value in values) - sum(value for _, value in top_values)
+        breakdown = [{"value": hostname, "count": value} for hostname, value in top_values]
+        if len(values) > len(top_values) and other_total > 0:
+            breakdown.append({"value": "Other", "count": other_total})
+        breakdowns[metric_key] = breakdown
+
+    if job:
+        job.log("Traffic matrix summary ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "metricColumns": [TRAFFIC_MATRIX_METRIC_KEYS[column] for column in metric_columns],
+        "totals": totals,
+        "breakdowns": breakdowns,
+    }
+
+
+def get_account_traffic_matrix_scorecard(
+    account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
+) -> dict[str, Any]:
+    """Build the trafficMatrix scoreCard JSON: overall totals plus a per-hostname metric breakdown."""
+    if job:
+        job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    if job:
+        job.log(f"Resolving traffic-report-hits-by-hostname.csv location ({data_mode})...", percent=8)
+    csv_path = resolve_report_csv_path(account_key, data_mode, TRAFFIC_REPORT_RELATIVE_PATH, job, context)
+
+    if job:
+        job.log(f"Reading {csv_path.name}...", percent=60)
+    columns, rows = read_csv_as_json(csv_path)
+    metric_columns = [column for column in columns if column in TRAFFIC_MATRIX_METRIC_KEYS]
+
+    if job:
+        job.log("Building scoreCard...", percent=80)
+    totals: dict[str, Any] = {"hostnames": 0}
+    for column in metric_columns:
+        totals[TRAFFIC_MATRIX_METRIC_KEYS[column]] = 0.0
+
+    hostname_entries: list[dict[str, Any]] = []
+    seen_hostnames: set[str] = set()
+    for row in rows:
+        hostname = row.get("hostname", "")
+        if not hostname or hostname in seen_hostnames:
+            continue
+        seen_hostnames.add(hostname)
+        entry: dict[str, Any] = {"hostname": hostname}
+        for column in metric_columns:
+            metric_key = TRAFFIC_MATRIX_METRIC_KEYS[column]
+            value = to_float(row.get(column))
+            entry[metric_key] = value
+            totals[metric_key] += value
+        hostname_entries.append(entry)
+    totals["hostnames"] = len(hostname_entries)
+
+    if job:
+        job.log("Traffic matrix scoreCard ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "totals": totals,
+        "hostnames": hostname_entries,
+    }
+
+
 def get_server_mode() -> str:
     return (os.getenv("SERVER_DATA_MODE") or "mock").lower()
 

@@ -7,6 +7,9 @@ import { HostMatrixCnamePage } from './pages/HostMatrixCnamePage'
 import { HostMatrixCnameSummaryPage } from './pages/HostMatrixCnameSummaryPage'
 import { HostnameCnameCoveragePage } from './pages/HostnameCnameCoveragePage'
 import { SummaryPage } from './pages/SummaryPage'
+import { TrafficMatrixPage } from './pages/TrafficMatrixPage'
+import { TrafficMatrixScoreCardPage } from './pages/TrafficMatrixScoreCardPage'
+import { TrafficMatrixSummaryPage } from './pages/TrafficMatrixSummaryPage'
 
 const ROUTER_BASENAME = import.meta.env.BASE_URL.replace(/\/$/, '') || '/'
 
@@ -24,6 +27,10 @@ function App() {
         <Route path="/account/:accountId/featureMatrix/scoreCard" element={<FeatureMatrixScoreCardPage />} />
         <Route path="/account/:accountId/featureMatrix/:propIdOrFeature" element={<FeatureMatrixPage />} />
         <Route path="/account/:accountId/featureMatrix" element={<FeatureMatrixPage />} />
+        <Route path="/account/:accountId/trafficMatrix/summary" element={<TrafficMatrixSummaryPage />} />
+        <Route path="/account/:accountId/trafficMatrix/scoreCard" element={<TrafficMatrixScoreCardPage />} />
+        <Route path="/account/:accountId/trafficMatrix/:hostname" element={<TrafficMatrixPage />} />
+        <Route path="/account/:accountId/trafficMatrix" element={<TrafficMatrixPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

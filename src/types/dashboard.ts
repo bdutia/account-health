@@ -235,6 +235,78 @@ export interface FeatureMatrixScoreCardResult {
   totals: FeatureMatrixScoreCardTotals
 }
 
+export interface TrafficMatrixTotals {
+  rows: number
+  hostnames: number
+}
+
+export interface TrafficMatrixResult {
+  accountKey: string
+  accountName: string
+  accountId: string
+  dataMode: CsvDataMode
+  columns: string[]
+  baseColumns: string[]
+  metricColumns: string[]
+  hostnames: string[]
+  rows: Array<Record<string, string>>
+  totals: TrafficMatrixTotals
+}
+
+export type TrafficMatrixJobProgressEvent =
+  | { type: 'progress'; message: string; level: JobProgressLevel; percent: number; timestamp: number }
+  | { type: 'completed'; percent: number; result: TrafficMatrixResult; timestamp: number }
+  | { type: 'failed'; message: string; timestamp: number }
+
+export interface TrafficMatrixSummaryTotals {
+  hostnames: number
+  edgeHits: number
+  originHits: number
+  edgeBytes: number
+  originBytes: number
+  hitsOffload: number
+  bytesOffload: number
+}
+
+export interface TrafficMatrixBreakdownItem {
+  value: string
+  count: number
+}
+
+export interface TrafficMatrixSummaryResult {
+  accountKey: string
+  accountName: string
+  accountId: string
+  dataMode: CsvDataMode
+  metricColumns: string[]
+  totals: TrafficMatrixSummaryTotals
+  breakdowns: Record<string, TrafficMatrixBreakdownItem[]>
+}
+
+export type TrafficMatrixSummaryJobProgressEvent =
+  | { type: 'progress'; message: string; level: JobProgressLevel; percent: number; timestamp: number }
+  | { type: 'completed'; percent: number; result: TrafficMatrixSummaryResult; timestamp: number }
+  | { type: 'failed'; message: string; timestamp: number }
+
+export interface TrafficMatrixScoreCardHostnameEntry {
+  hostname: string
+  edgeHits: number
+  originHits: number
+  edgeBytes: number
+  originBytes: number
+  hitsOffload: number
+  bytesOffload: number
+}
+
+export interface TrafficMatrixScoreCardResult {
+  accountKey: string
+  accountName: string
+  accountId: string
+  dataMode: CsvDataMode
+  totals: TrafficMatrixSummaryTotals
+  hostnames: TrafficMatrixScoreCardHostnameEntry[]
+}
+
 export interface AccountDetail {
   accountId: string
   name: string

@@ -106,7 +106,7 @@ def run_pagespeed_fallback(hostname, api_key):
 # ----------------------------------------------------
 # Execution Block
 # ----------------------------------------------------
-API_KEY = "AIzaSyAVRy5mruWdsY0B4EJu_XC3LTGspgT2clo"
+API_KEY = "put_your_key_here"
 
 # Test 1: Querying a major domain likely to have traffic data in CrUX
 crux_success_test = get_web_performance_data("www.chrysler.com", API_KEY)

@@ -1355,6 +1355,423 @@ def get_server_mode() -> str:
     return (os.getenv("SERVER_DATA_MODE") or "mock").lower()
 
 
+# ----------------------------------------------------------------------------
+# perfMatrix: Core Web Vitals per config-summary.csv hostname, via CrUX (with a
+# PageSpeed Insights fallback for origins with no CrUX field data).
+# ----------------------------------------------------------------------------
+
+CRUX_METRICS = ["largest_contentful_paint", "interaction_to_next_paint", "cumulative_layout_shift"]
+
+# web.dev Core Web Vitals thresholds: (good upper bound, needs-improvement upper bound).
+CWV_THRESHOLDS: dict[str, tuple[float, float]] = {
+    "lcpMs": (2500, 4000),
+    "inpMs": (200, 500),
+    "cls": (0.1, 0.25),
+}
+
+PERF_MATRIX_MAX_HOSTNAMES = int(os.getenv("PERF_MATRIX_MAX_HOSTNAMES") or 40)
+PERF_MATRIX_WORKER_COUNT = int(os.getenv("PERF_MATRIX_WORKERS") or 5)
+
+
+def get_crux_config() -> dict[str, str]:
+    return {"api_key": os.getenv("CRUX_API_KEY", "")}
+
+
+def classify_cwv(metric_key: str, value: float | None) -> str | None:
+    if value is None:
+        return None
+    good_max, needs_improvement_max = CWV_THRESHOLDS[metric_key]
+    if value <= good_max:
+        return "good"
+    if value <= needs_improvement_max:
+        return "needs-improvement"
+    return "poor"
+
+
+@sleep_and_retry
+@limits(calls=int(os.getenv("CRUX_RATE_LIMIT_CALLS") or 100), period=60)
+def fetch_crux_record(session: requests.Session, hostname: str, api_key: str) -> requests.Response:
+    """Current (rolling 28-day) CrUX field data snapshot for an origin."""
+    url = "https://chromeuxreport.googleapis.com/v1/records:queryRecord"
+    payload = {"origin": f"https://{hostname}", "metrics": CRUX_METRICS}
+    return session.post(url, params={"key": api_key}, json=payload, timeout=15)
+
+
+@sleep_and_retry
+@limits(calls=int(os.getenv("CRUX_RATE_LIMIT_CALLS") or 100), period=60)
+def fetch_crux_history_record(session: requests.Session, hostname: str, api_key: str) -> requests.Response:
+    """Historical progression of 28-day CrUX snapshots (weekly cadence) for an origin."""
+    url = "https://chromeuxreport.googleapis.com/v1/records:queryHistoryRecord"
+    payload = {"origin": f"https://{hostname}", "metrics": CRUX_METRICS}
+    return session.post(url, params={"key": api_key}, json=payload, timeout=15)
+
+
+@sleep_and_retry
+@limits(calls=int(os.getenv("PSI_RATE_LIMIT_CALLS") or 10), period=60)
+def fetch_pagespeed_insights(session: requests.Session, hostname: str, api_key: str) -> requests.Response:
+    """Synthetic Lighthouse lab-data fallback for origins with no CrUX field data."""
+    url = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
+    target_url = hostname if hostname.startswith("http") else f"https://{hostname}"
+    params = {"url": target_url, "key": api_key, "strategy": "mobile", "category": "performance"}
+    return session.get(url, params=params, timeout=90)
+
+
+def extract_current_cwv_from_crux(record: dict[str, Any]) -> dict[str, float | None]:
+    metrics = record.get("metrics", {})
+    return {
+        "lcpMs": metrics.get("largest_contentful_paint", {}).get("percentiles", {}).get("p75"),
+        "inpMs": metrics.get("interaction_to_next_paint", {}).get("percentiles", {}).get("p75"),
+        "cls": metrics.get("cumulative_layout_shift", {}).get("percentiles", {}).get("p75"),
+    }
+
+
+def extract_cwv_history_from_crux(record: dict[str, Any]) -> list[dict[str, Any]]:
+    """Zip CrUX history's per-metric percentile timeseries with their collection periods."""
+    metrics = record.get("metrics", {})
+    periods = record.get("collectionPeriods", [])
+    lcp_series = metrics.get("largest_contentful_paint", {}).get("percentilesTimeseries", {}).get("p75s", [])
+    inp_series = metrics.get("interaction_to_next_paint", {}).get("percentilesTimeseries", {}).get("p75s", [])
+    cls_series = metrics.get("cumulative_layout_shift", {}).get("percentilesTimeseries", {}).get("p75s", [])
+
+    history: list[dict[str, Any]] = []
+    for index, period in enumerate(periods):
+        last_date = period.get("lastDate", {})
+        year, month, day = last_date.get("year"), last_date.get("month"), last_date.get("day")
+        label = f"{year:04d}-{month:02d}-{day:02d}" if year and month and day else str(index)
+        history.append(
+            {
+                "period": label,
+                "lcpMs": lcp_series[index] if index < len(lcp_series) else None,
+                "inpMs": inp_series[index] if index < len(inp_series) else None,
+                "cls": cls_series[index] if index < len(cls_series) else None,
+            }
+        )
+    return history
+
+
+def get_hostname_core_web_vitals(session: requests.Session, hostname: str, api_key: str) -> dict[str, Any]:
+    """Fetch current + historical Core Web Vitals for a hostname: CrUX first, PageSpeed Insights on 404."""
+    result: dict[str, Any] = {
+        "hostname": hostname,
+        "source": None,
+        "available": False,
+        "lcpMs": None,
+        "inpMs": None,
+        "cls": None,
+        "lcpRating": None,
+        "inpRating": None,
+        "clsRating": None,
+        "history": [],
+        "error": None,
+    }
+    if not api_key:
+        result["error"] = "CRUX_API_KEY not configured"
+        return result
+
+    try:
+        current_response = fetch_crux_record(session, hostname, api_key)
+    except requests.exceptions.RequestException as error:
+        result["error"] = f"CrUX request failed: {error}"
+        return result
+
+    if current_response.status_code == 200:
+        record = current_response.json().get("record", {})
+        result.update(extract_current_cwv_from_crux(record))
+        result["source"] = "crux"
+        result["available"] = True
+
+        try:
+            history_response = fetch_crux_history_record(session, hostname, api_key)
+            if history_response.status_code == 200:
+                result["history"] = extract_cwv_history_from_crux(history_response.json().get("record", {}))
+        except requests.exceptions.RequestException:
+            pass  # History is best-effort; the current snapshot metrics above still stand.
+
+    elif current_response.status_code == 404:
+        try:
+            psi_response = fetch_pagespeed_insights(session, hostname, api_key)
+        except requests.exceptions.RequestException as error:
+            result["error"] = f"PageSpeed Insights request failed: {error}"
+            psi_response = None
+
+        if psi_response is not None and psi_response.status_code == 200:
+            audits = psi_response.json().get("lighthouseResult", {}).get("audits", {})
+            result["lcpMs"] = audits.get("largest-contentful-paint", {}).get("numericValue")
+            result["cls"] = audits.get("cumulative-layout-shift", {}).get("numericValue")
+            # PSI lab runs have no INP equivalent; Total Blocking Time is the closest lab proxy.
+            result["inpMs"] = audits.get("total-blocking-time", {}).get("numericValue")
+            result["source"] = "pagespeed"
+            result["available"] = True
+        elif not result["error"]:
+            result["error"] = "No CrUX field data and PageSpeed Insights fallback unavailable"
+    else:
+        result["error"] = f"CrUX API error {current_response.status_code}"
+
+    result["lcpRating"] = classify_cwv("lcpMs", result["lcpMs"])
+    result["inpRating"] = classify_cwv("inpMs", result["inpMs"])
+    result["clsRating"] = classify_cwv("cls", result["cls"])
+    return result
+
+
+def _collect_account_perf_data(
+    account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
+) -> dict[str, Any]:
+    """Shared helper: read config-summary.csv hostnames and fetch CrUX/PSI Core Web Vitals for each."""
+    if job:
+        job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    if job:
+        job.log(f"Resolving config-summary.csv location ({data_mode})...", percent=5)
+    csv_path = resolve_report_csv_path(account_key, data_mode, CONFIG_SUMMARY_RELATIVE_PATH, job, context)
+
+    if job:
+        job.log(f"Reading {csv_path.name}...", percent=10)
+    columns, rows = read_csv_as_json(csv_path)
+    hostnames = sorted({row.get("hostname", "") for row in rows if row.get("hostname")})
+
+    processed_hostnames = hostnames[:PERF_MATRIX_MAX_HOSTNAMES]
+    if job and len(hostnames) > len(processed_hostnames):
+        job.log(
+            f"Found {len(hostnames)} hostnames; limiting live CrUX/PageSpeed lookups to the first "
+            f"{len(processed_hostnames)} (raise PERF_MATRIX_MAX_HOSTNAMES to change this)",
+            level="warning",
+            percent=12,
+        )
+
+    cfg = get_crux_config()
+    if job and not cfg["api_key"]:
+        job.log(
+            "CRUX_API_KEY is not set in .env.server; Core Web Vitals will be unavailable for all hostnames",
+            level="warning",
+            percent=14,
+        )
+
+    session = requests.Session()
+    perf_by_hostname: dict[str, dict[str, Any]] = {}
+    completed = 0
+    total = len(processed_hostnames) or 1
+
+    with ThreadPoolExecutor(max_workers=PERF_MATRIX_WORKER_COUNT) as executor:
+        futures = {
+            executor.submit(get_hostname_core_web_vitals, session, hostname, cfg["api_key"]): hostname
+            for hostname in processed_hostnames
+        }
+        for future in as_completed(futures):
+            hostname = futures[future]
+            try:
+                perf = future.result()
+            except Exception as error:
+                perf = {
+                    "hostname": hostname,
+                    "source": None,
+                    "available": False,
+                    "lcpMs": None,
+                    "inpMs": None,
+                    "cls": None,
+                    "lcpRating": None,
+                    "inpRating": None,
+                    "clsRating": None,
+                    "history": [],
+                    "error": str(error),
+                }
+            perf_by_hostname[hostname] = perf
+            completed += 1
+            if job:
+                percent = 15 + int(70 * completed / total)
+                status = "available" if perf["available"] else f"unavailable ({perf.get('error') or 'no data'})"
+                job.log(
+                    f"[{completed}/{total}] {hostname}: {status}",
+                    level="success" if perf["available"] else "warning",
+                    percent=percent,
+                )
+
+    return {
+        "account_metadata": account_metadata,
+        "columns": columns,
+        "rows": rows,
+        "hostnames": hostnames,
+        "processed_hostnames": processed_hostnames,
+        "perf_by_hostname": perf_by_hostname,
+    }
+
+
+def _format_metric_value(value: float | None) -> str:
+    return "" if value is None else str(value)
+
+
+PERF_MATRIX_METRIC_COLUMNS = ["source", "lcpMs", "inpMs", "cls", "lcpRating", "inpRating", "clsRating"]
+
+
+def get_account_perf_matrix(
+    account_key: str, data_mode: str, job: Job, context: str | None = None
+) -> dict[str, Any]:
+    """Build the hostname/Core Web Vitals performance matrix from config-summary.csv + CrUX/PSI."""
+    collected = _collect_account_perf_data(account_key, data_mode, job, context)
+    account_metadata = collected["account_metadata"]
+    columns = collected["columns"]
+    perf_by_hostname = collected["perf_by_hostname"]
+
+    rows_out: list[dict[str, str]] = []
+    for row in collected["rows"]:
+        perf = perf_by_hostname.get(row.get("hostname", ""))
+        enriched = dict(row)
+        if perf:
+            enriched.update(
+                {
+                    "source": perf["source"] or "",
+                    "lcpMs": _format_metric_value(perf["lcpMs"]),
+                    "inpMs": _format_metric_value(perf["inpMs"]),
+                    "cls": _format_metric_value(perf["cls"]),
+                    "lcpRating": perf["lcpRating"] or "",
+                    "inpRating": perf["inpRating"] or "",
+                    "clsRating": perf["clsRating"] or "",
+                }
+            )
+        else:
+            enriched.update({column: "" for column in PERF_MATRIX_METRIC_COLUMNS})
+        rows_out.append(enriched)
+
+    series = {hostname: perf["history"] for hostname, perf in perf_by_hostname.items()}
+    available_count = sum(1 for perf in perf_by_hostname.values() if perf["available"])
+
+    job.log("Perf matrix ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "columns": columns + PERF_MATRIX_METRIC_COLUMNS,
+        "baseColumns": columns,
+        "metricColumns": PERF_MATRIX_METRIC_COLUMNS,
+        "hostnames": collected["hostnames"],
+        "rows": rows_out,
+        "series": series,
+        "totals": {
+            "hostnames": len(collected["hostnames"]),
+            "processed": len(collected["processed_hostnames"]),
+            "available": available_count,
+            "unavailable": len(collected["processed_hostnames"]) - available_count,
+        },
+    }
+
+
+def get_account_perf_matrix_summary(
+    account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
+) -> dict[str, Any]:
+    """Summarize Core Web Vitals: availability + per-metric rating breakdown, plus per-hostname trend series."""
+    collected = _collect_account_perf_data(account_key, data_mode, job, context)
+    account_metadata = collected["account_metadata"]
+    perf_by_hostname = collected["perf_by_hostname"]
+    perf_values = list(perf_by_hostname.values())
+
+    if job:
+        job.log("Computing Core Web Vitals summary...", percent=90)
+
+    available = [perf for perf in perf_values if perf["available"]]
+
+    def average(metric_key: str) -> float | None:
+        values = [perf[metric_key] for perf in available if perf.get(metric_key) is not None]
+        return round(sum(values) / len(values), 2) if values else None
+
+    totals = {
+        "hostnames": len(collected["hostnames"]),
+        "processed": len(collected["processed_hostnames"]),
+        "available": len(available),
+        "unavailable": len(perf_values) - len(available),
+        "lcpMsAvg": average("lcpMs"),
+        "inpMsAvg": average("inpMs"),
+        "clsAvg": average("cls"),
+    }
+
+    rating_labels = ["good", "needs-improvement", "poor"]
+    breakdowns: dict[str, list[dict[str, Any]]] = {}
+    for metric_key, rating_key in (("lcpMs", "lcpRating"), ("inpMs", "inpRating"), ("cls", "clsRating")):
+        counts = {label: 0 for label in rating_labels}
+        unavailable_count = 0
+        for perf in perf_values:
+            rating = perf.get(rating_key)
+            if rating in counts:
+                counts[rating] += 1
+            else:
+                unavailable_count += 1
+        breakdown = [{"value": label, "count": counts[label]} for label in rating_labels]
+        if unavailable_count:
+            breakdown.append({"value": "unavailable", "count": unavailable_count})
+        breakdowns[metric_key] = breakdown
+
+    series = {hostname: perf["history"] for hostname, perf in perf_by_hostname.items()}
+
+    if job:
+        job.log("Perf matrix summary ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "totals": totals,
+        "breakdowns": breakdowns,
+        "series": series,
+    }
+
+
+def get_account_perf_matrix_scorecard(
+    account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
+) -> dict[str, Any]:
+    """Build the perfMatrix scoreCard JSON: overall averaged Core Web Vitals plus per-hostname values."""
+    collected = _collect_account_perf_data(account_key, data_mode, job, context)
+    account_metadata = collected["account_metadata"]
+    perf_by_hostname = collected["perf_by_hostname"]
+    available = [perf for perf in perf_by_hostname.values() if perf["available"]]
+
+    if job:
+        job.log("Building scoreCard...", percent=90)
+
+    def average(metric_key: str) -> float | None:
+        values = [perf[metric_key] for perf in available if perf.get(metric_key) is not None]
+        return round(sum(values) / len(values), 2) if values else None
+
+    hostname_entries = [
+        {
+            "hostname": hostname,
+            "corewebvitals": {
+                "lcpMs": perf["lcpMs"],
+                "inpMs": perf["inpMs"],
+                "cls": perf["cls"],
+                "lcpRating": perf["lcpRating"],
+                "inpRating": perf["inpRating"],
+                "clsRating": perf["clsRating"],
+                "source": perf["source"],
+            },
+        }
+        for hostname, perf in perf_by_hostname.items()
+    ]
+
+    if job:
+        job.log("Perf matrix scoreCard ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "totals": {
+            "hostnames": len(collected["hostnames"]),
+            "corewebvitals": {
+                "lcpMsAvg": average("lcpMs"),
+                "inpMsAvg": average("inpMs"),
+                "clsAvg": average("cls"),
+            },
+        },
+        "hostnames": hostname_entries,
+    }
+
+
 def get_google_config() -> dict[str, str | None]:
     return {
         "spreadsheet_id": os.getenv("GOOGLE_SHEETS_SPREADSHEET_ID"),

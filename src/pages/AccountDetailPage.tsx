@@ -152,6 +152,24 @@ export function AccountDetailPage() {
           >
             View Hostname CNAME Matrix Summary →
           </Link>
+          <Link
+            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/featureMatrix`}
+          >
+            View Feature Matrix →
+          </Link>
+          <Link
+            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/featureMatrix/summary`}
+          >
+            View Feature Matrix Summary →
+          </Link>
+          <Link
+            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/featureMatrix/scoreCard`}
+          >
+            View Feature Matrix ScoreCard →
+          </Link>
 
           {!hostnameCoverage ? (
             <p className="text-sm text-slate-600">

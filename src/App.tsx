@@ -1,5 +1,8 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AccountDetailPage } from './pages/AccountDetailPage'
+import { FeatureMatrixPage } from './pages/FeatureMatrixPage'
+import { FeatureMatrixScoreCardPage } from './pages/FeatureMatrixScoreCardPage'
+import { FeatureMatrixSummaryPage } from './pages/FeatureMatrixSummaryPage'
 import { HostMatrixCnamePage } from './pages/HostMatrixCnamePage'
 import { HostMatrixCnameSummaryPage } from './pages/HostMatrixCnameSummaryPage'
 import { HostnameCnameCoveragePage } from './pages/HostnameCnameCoveragePage'
@@ -17,6 +20,10 @@ function App() {
         <Route path="/account/:accountId/hostmatrix/cname" element={<HostMatrixCnamePage />} />
         <Route path="/account/:accountId/hostmatrix/cname/summary" element={<HostMatrixCnameSummaryPage />} />
         <Route path="/account/:accountId/hostmatrix-cname" element={<HostMatrixCnamePage />} />
+        <Route path="/account/:accountId/featureMatrix/summary" element={<FeatureMatrixSummaryPage />} />
+        <Route path="/account/:accountId/featureMatrix/scoreCard" element={<FeatureMatrixScoreCardPage />} />
+        <Route path="/account/:accountId/featureMatrix/:propIdOrFeature" element={<FeatureMatrixPage />} />
+        <Route path="/account/:accountId/featureMatrix" element={<FeatureMatrixPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

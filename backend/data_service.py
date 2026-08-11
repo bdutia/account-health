@@ -1021,6 +1021,175 @@ def get_account_hostname_cname_matrix_summary(
     }
 
 
+CONFIG_AUDIT_RELATIVE_PATH = Path("REPORTS") / "CSVDATA" / "config-audit.csv"
+
+# Every other column in config-audit.csv is treated as a feature toggle/setting.
+FEATURE_MATRIX_BASE_COLUMNS = [
+    "propertyName",
+    "propertyVersion",
+    "productionStatus",
+    "stagingStatus",
+    "contractId",
+    "propertyId",
+    "ruleFormat",
+    "securityOptions",
+]
+FEATURE_MATRIX_BASE_COLUMN_SET = set(FEATURE_MATRIX_BASE_COLUMNS)
+FEATURE_MATRIX_ABSENT_VALUES = {"false", "disabled", "none", "n/a", "-"}
+
+
+def get_feature_matrix_columns(columns: list[str]) -> list[str]:
+    """Every config-audit.csv column that isn't a base property attribute is a feature."""
+    return [column for column in columns if column not in FEATURE_MATRIX_BASE_COLUMN_SET]
+
+
+def is_feature_value_present(raw_value: str | None) -> bool:
+    """A feature is considered enabled/present when its cell is non-blank and not an explicit off value."""
+    value = (raw_value or "").strip()
+    if not value:
+        return False
+    return value.lower() not in FEATURE_MATRIX_ABSENT_VALUES
+
+
+def get_account_feature_matrix(
+    account_key: str, data_mode: str, job: Job, context: str | None = None
+) -> dict[str, Any]:
+    """Build the property/feature matrix for an account from the config-audit.csv report."""
+    job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    job.log(f"Resolving config-audit.csv location ({data_mode})...", percent=8)
+    csv_path = resolve_report_csv_path(account_key, data_mode, CONFIG_AUDIT_RELATIVE_PATH, job, context)
+
+    job.log(f"Reading {csv_path.name}...", percent=60)
+    columns, rows = read_csv_as_json(csv_path)
+    feature_columns = get_feature_matrix_columns(columns)
+    properties = sorted({row.get("propertyName", "") for row in rows if row.get("propertyName")})
+
+    job.log("Feature matrix ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "columns": columns,
+        "baseColumns": [column for column in FEATURE_MATRIX_BASE_COLUMNS if column in columns],
+        "featureColumns": feature_columns,
+        "properties": properties,
+        "rows": rows,
+        "totals": {"rows": len(rows), "properties": len(properties), "features": len(feature_columns)},
+    }
+
+
+def get_account_feature_matrix_summary(
+    account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
+) -> dict[str, Any]:
+    """Summarize config-audit.csv: overall feature adoption plus an enabled/disabled breakdown per feature."""
+    if job:
+        job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    if job:
+        job.log(f"Resolving config-audit.csv location ({data_mode})...", percent=8)
+    csv_path = resolve_report_csv_path(account_key, data_mode, CONFIG_AUDIT_RELATIVE_PATH, job, context)
+
+    if job:
+        job.log(f"Reading {csv_path.name}...", percent=60)
+    columns, rows = read_csv_as_json(csv_path)
+    feature_columns = get_feature_matrix_columns(columns)
+    properties = sorted({row.get("propertyName", "") for row in rows if row.get("propertyName")})
+
+    if job:
+        job.log("Computing feature adoption breakdowns...", percent=80)
+    total_rows = len(rows)
+    breakdowns: dict[str, list[dict[str, Any]]] = {}
+    overall_enabled = 0
+    for column in feature_columns:
+        enabled_count = sum(1 for row in rows if is_feature_value_present(row.get(column)))
+        disabled_count = total_rows - enabled_count
+        overall_enabled += enabled_count
+        breakdowns[column] = [
+            {"value": "Enabled", "count": enabled_count},
+            {"value": "Disabled", "count": disabled_count},
+        ]
+    overall_total_cells = total_rows * len(feature_columns)
+    overall_disabled = overall_total_cells - overall_enabled
+
+    if job:
+        job.log("Feature matrix summary ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "columns": columns,
+        "featureColumns": feature_columns,
+        "totals": {
+            "rows": total_rows,
+            "properties": len(properties),
+            "features": len(feature_columns),
+            "enabled": overall_enabled,
+            "disabled": overall_disabled,
+        },
+        "breakdowns": breakdowns,
+    }
+
+
+def get_account_feature_matrix_scorecard(
+    account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
+) -> dict[str, Any]:
+    """Build the featureMatrix scoreCard JSON: per-feature count and the properties that have it set."""
+    if job:
+        job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    if job:
+        job.log(f"Resolving config-audit.csv location ({data_mode})...", percent=8)
+    csv_path = resolve_report_csv_path(account_key, data_mode, CONFIG_AUDIT_RELATIVE_PATH, job, context)
+
+    if job:
+        job.log(f"Reading {csv_path.name}...", percent=60)
+    columns, rows = read_csv_as_json(csv_path)
+    feature_columns = get_feature_matrix_columns(columns)
+    properties = sorted({row.get("propertyName", "") for row in rows if row.get("propertyName")})
+
+    if job:
+        job.log("Building scoreCard...", percent=80)
+    feature_matrix: list[dict[str, Any]] = []
+    for column in feature_columns:
+        property_entries = [
+            {"propertyName": row.get("propertyName", ""), "status": (row.get(column) or "").strip()}
+            for row in rows
+            if (row.get(column) or "").strip()
+        ]
+        feature_matrix.append(
+            {"featureName": column, "count": len(property_entries), "properties": property_entries}
+        )
+
+    if job:
+        job.log("Feature matrix scoreCard ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "featureMatrix": feature_matrix,
+        "totals": {"properties": len(properties), "features": len(feature_columns)},
+    }
+
+
 def get_server_mode() -> str:
     return (os.getenv("SERVER_DATA_MODE") or "mock").lower()
 

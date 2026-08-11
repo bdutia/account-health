@@ -13,6 +13,9 @@ from backend.data_service import (
     get_account_hostname_cname_coverage,
     get_account_hostname_cname_matrix,
     get_account_hostname_cname_matrix_summary,
+    get_account_feature_matrix,
+    get_account_feature_matrix_summary,
+    get_account_feature_matrix_scorecard,
     get_account_dashboard_data,
     get_summary_dashboard_data,
     get_summary_dashboard_debug,
@@ -159,6 +162,76 @@ def hostname_cname_matrix_summary_json(
     """Synchronous summary endpoint (no job/SSE wrapper) for other components to consume directly."""
     try:
         return get_account_hostname_cname_matrix_summary(account_key, data, None, context)
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error))
+
+
+@app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/featureMatrix/jobs')
+def start_feature_matrix_job(
+    account_key: str,
+    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    context: str | None = Query(None),
+) -> dict[str, object]:
+    job = job_manager.create()
+    job_manager.run_in_background(
+        job, lambda active_job: get_account_feature_matrix(account_key, data, active_job, context)
+    )
+    return {'jobId': job.job_id}
+
+
+@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/featureMatrix/jobs/{{job_id}}/events')
+def stream_feature_matrix_job(account_key: str, job_id: str) -> StreamingResponse:
+    job = job_manager.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail='Job not found')
+    return _job_event_stream(job)
+
+
+@app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/featureMatrix/summary/jobs')
+def start_feature_matrix_summary_job(
+    account_key: str,
+    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    context: str | None = Query(None),
+) -> dict[str, object]:
+    job = job_manager.create()
+    job_manager.run_in_background(
+        job, lambda active_job: get_account_feature_matrix_summary(account_key, data, active_job, context)
+    )
+    return {'jobId': job.job_id}
+
+
+@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/featureMatrix/summary/jobs/{{job_id}}/events')
+def stream_feature_matrix_summary_job(account_key: str, job_id: str) -> StreamingResponse:
+    job = job_manager.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail='Job not found')
+    return _job_event_stream(job)
+
+
+@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/featureMatrix/summary')
+def feature_matrix_summary_json(
+    account_key: str,
+    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    context: str | None = Query(None),
+    jsonOut: bool = Query(True),
+) -> dict[str, object]:
+    """Synchronous summary endpoint (no job/SSE wrapper) for other components to consume directly."""
+    try:
+        return get_account_feature_matrix_summary(account_key, data, None, context)
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error))
+
+
+@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/featureMatrix/scoreCard')
+def feature_matrix_scorecard_json(
+    account_key: str,
+    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    context: str | None = Query(None),
+    jsonOut: bool = Query(True),
+) -> dict[str, object]:
+    """Synchronous scoreCard endpoint: featureName/count/properties JSON, no job/SSE wrapper."""
+    try:
+        return get_account_feature_matrix_scorecard(account_key, data, None, context)
     except Exception as error:
         raise HTTPException(status_code=500, detail=str(error))
 

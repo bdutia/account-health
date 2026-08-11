@@ -157,6 +157,84 @@ export type HostnameCnameMatrixSummaryJobProgressEvent =
   | { type: 'completed'; percent: number; result: HostnameCnameMatrixSummaryResult; timestamp: number }
   | { type: 'failed'; message: string; timestamp: number }
 
+export interface FeatureMatrixTotals {
+  rows: number
+  properties: number
+  features: number
+}
+
+export interface FeatureMatrixResult {
+  accountKey: string
+  accountName: string
+  accountId: string
+  dataMode: CsvDataMode
+  columns: string[]
+  baseColumns: string[]
+  featureColumns: string[]
+  properties: string[]
+  rows: Array<Record<string, string>>
+  totals: FeatureMatrixTotals
+}
+
+export type FeatureMatrixJobProgressEvent =
+  | { type: 'progress'; message: string; level: JobProgressLevel; percent: number; timestamp: number }
+  | { type: 'completed'; percent: number; result: FeatureMatrixResult; timestamp: number }
+  | { type: 'failed'; message: string; timestamp: number }
+
+export interface FeatureMatrixSummaryTotals {
+  rows: number
+  properties: number
+  features: number
+  enabled: number
+  disabled: number
+}
+
+export interface FeatureMatrixBreakdownItem {
+  value: string
+  count: number
+}
+
+export interface FeatureMatrixSummaryResult {
+  accountKey: string
+  accountName: string
+  accountId: string
+  dataMode: CsvDataMode
+  columns: string[]
+  featureColumns: string[]
+  totals: FeatureMatrixSummaryTotals
+  breakdowns: Record<string, FeatureMatrixBreakdownItem[]>
+}
+
+export type FeatureMatrixSummaryJobProgressEvent =
+  | { type: 'progress'; message: string; level: JobProgressLevel; percent: number; timestamp: number }
+  | { type: 'completed'; percent: number; result: FeatureMatrixSummaryResult; timestamp: number }
+  | { type: 'failed'; message: string; timestamp: number }
+
+export interface FeatureMatrixScoreCardEntry {
+  propertyName: string
+  status: string
+}
+
+export interface FeatureMatrixScoreCardFeature {
+  featureName: string
+  count: number
+  properties: FeatureMatrixScoreCardEntry[]
+}
+
+export interface FeatureMatrixScoreCardTotals {
+  properties: number
+  features: number
+}
+
+export interface FeatureMatrixScoreCardResult {
+  accountKey: string
+  accountName: string
+  accountId: string
+  dataMode: CsvDataMode
+  featureMatrix: FeatureMatrixScoreCardFeature[]
+  totals: FeatureMatrixScoreCardTotals
+}
+
 export interface AccountDetail {
   accountId: string
   name: string

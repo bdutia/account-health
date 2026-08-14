@@ -47,7 +47,7 @@ def normalize_base_path(raw_value: str | None) -> str:
 
 
 APP_BASE_PATH = normalize_base_path(os.getenv('APP_BASE_PATH'))
-API_PREFIX = f'{APP_BASE_PATH}/api' if APP_BASE_PATH else '/api'
+API_PREFIX = f'{APP_BASE_PATH}' if APP_BASE_PATH else '/api'
 
 app.add_middleware(
     CORSMiddleware,

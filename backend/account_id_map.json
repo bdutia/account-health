@@ -5,18 +5,18 @@
     "csvAccountDir": "test-account-dir"
   },
   "deloitte-tohoku": {
-    "accountName": "Deloitte Tohmatsu India Private Limited",
-    "accountId": "1-2TRO2",
+    "accountName": "deloitte-tohoku",
+    "accountId": "deloitte-tohoku",
     "csvAccountDir": "deloitte-tohoku"
   },
   "delta-airlines": {
-    "accountName": "Delta Airlines Private Limited",
-    "accountId": "1-2TRO2",
+    "accountName": "delta-airlines",
+    "accountId": "delta-airlines",
     "csvAccountDir": "delta-airlines"
   },
   "stellantis": {
-    "accountName": "Chrysler corporation limited",
-    "accountId": "1-2TRO2",
+    "accountName": "stellantis",
+    "accountId": "stellantis",
     "csvAccountDir": "stellantis"
   }
 }

@@ -6,7 +6,9 @@ import type {
   JobProgressEvent,
 } from '../types/dashboard'
 
-const DEFAULT_API_BASE_URL = `${import.meta.env.BASE_URL}api`.replace(/\/$/, '')
+//const DEFAULT_API_BASE_URL = `${import.meta.env.BASE_URL}api`.replace(/\/$/, '')
+//trying to fix: double api append from front end - vite build: 
+const DEFAULT_API_BASE_URL = `${import.meta.env.BASE_URL}`.replace(/\/$/, '')
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE_URL
 
 export async function startHostnameCnameCoverageJob(accountKey: string): Promise<string> {

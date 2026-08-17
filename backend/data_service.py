@@ -1,5 +1,8 @@
+import csv
 import os
 import json
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
@@ -10,6 +13,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from ratelimit import limits, sleep_and_retry
 
+from backend.job_manager import Job
 from backend.mock_data import account_details, accounts, summary_metrics, summary_panels
 
 
@@ -18,19 +22,27 @@ def get_akamai_config() -> dict[str, str]:
         "edge_rc_path": os.getenv("EDGE_RC_PATH") or str(Path.home() / ".edgerc"),
         "edge_rc_section": os.getenv("EDGE_RC_SECTION") or "default",
         "account_map_path": os.getenv("AKAMAI_ACCOUNT_MAP_PATH") or "backend/account_id_map.json",
+        "storage_dir": os.getenv("AKAMAI_STORAGE_DIR") or "backend/storage",
     }
 
 
-def _resolve_account_map_path(account_map_path: str) -> Path:
-    path = Path(account_map_path).expanduser()
+def _resolve_backend_path(raw_path: str) -> Path:
+    path = Path(raw_path).expanduser()
     if path.is_absolute():
         return path
     return (Path(__file__).resolve().parent.parent / path).resolve()
 
 
+def get_storage_dir() -> Path:
+    cfg = get_akamai_config()
+    path = _resolve_backend_path(cfg["storage_dir"])
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def load_account_id_map() -> dict[str, dict[str, str]]:
     cfg = get_akamai_config()
-    path = _resolve_account_map_path(cfg["account_map_path"])
+    path = _resolve_backend_path(cfg["account_map_path"])
     if not path.exists():
         raise FileNotFoundError(f"Akamai account map file not found: {path}")
 
@@ -41,16 +53,18 @@ def load_account_id_map() -> dict[str, dict[str, str]]:
     normalized: dict[str, dict[str, str]] = {}
     for key, value in payload.items():
         if isinstance(value, str):
-            normalized[key] = {"accountName": key, "accountId": value}
+            normalized[key] = {"accountName": key, "accountId": value, "csvAccountDir": key}
             continue
 
         if isinstance(value, dict):
             account_id = value.get("accountId") or value.get("account_id")
             account_name = value.get("accountName") or value.get("account_name") or key
+            csv_account_dir = value.get("csvAccountDir") or value.get("csv_account_dir") or key
             if isinstance(account_id, str) and account_id.strip():
                 normalized[key] = {
                     "accountName": str(account_name),
                     "accountId": account_id.strip(),
+                    "csvAccountDir": str(csv_account_dir),
                 }
 
     if not normalized:
@@ -196,11 +210,1813 @@ def get_account_hostname_coverage(account_key: str) -> dict[str, Any]:
         return {"source": "akamai", "data": None, "error": str(error)}
 
 
+FEATURE_MATRIX_COLUMNS = [
+    "propertyId",
+    "propertyName",
+    "contractId",
+    "groupId",
+    "propertyVersion",
+    "hostname",
+    "originServers",
+    "behaviors",
+    "stagingActivatedAt",
+    "stagingActivatedBy",
+    "productionActivatedAt",
+    "productionActivatedBy",
+]
+
+HOST2CNAME_COLUMNS = ["hostname", "resolvedValue", "recordType"]
+
+PROPERTY_WORKER_COUNT = int(os.getenv("AKAMAI_PROPERTY_WORKERS") or 8)
+DNS_WORKER_COUNT = int(os.getenv("AKAMAI_DNS_WORKERS") or 16)
+RATE_LIMIT_COOLOFF_SECONDS = int(os.getenv("AKAMAI_RATE_LIMIT_COOLOFF_SECONDS") or 60)
+
+
+def call_with_cooloff(job: Job, description: str, fetch_fn, *args, max_attempts: int = 3, **kwargs) -> requests.Response:
+    """Call an Akamai API function, pausing and retrying if WAF/API rate limiting (429) is hit."""
+    attempt = 0
+    while True:
+        response = fetch_fn(*args, **kwargs)
+        attempt += 1
+        if response.status_code != 429 or attempt >= max_attempts:
+            return response
+        job.log(
+            f"Rate limited by Akamai while {description} (attempt {attempt}/{max_attempts}); "
+            f"cooling off for {RATE_LIMIT_COOLOFF_SECONDS}s...",
+            level="warning",
+        )
+        time.sleep(RATE_LIMIT_COOLOFF_SECONDS)
+        job.log(f"Resuming {description} after cool-off", level="info")
+
+PROPERTY_WORKER_COUNT = int(os.getenv("AKAMAI_PROPERTY_WORKERS") or 8)
+DNS_WORKER_COUNT = int(os.getenv("AKAMAI_DNS_WORKERS") or 16)
+
+
+@sleep_and_retry
+@limits(calls=100, period=60)
+def fetch_papi_groups(session: requests.Session, base_url: str) -> requests.Response:
+    url = urljoin(base_url, "/papi/v1/groups")
+    return session.get(url)
+
+
+@sleep_and_retry
+@limits(calls=100, period=60)
+def fetch_papi_properties(session: requests.Session, base_url: str, contract_id: str, group_id: str) -> requests.Response:
+    url = urljoin(base_url, "/papi/v1/properties")
+    return session.get(url, params={"contractId": contract_id, "groupId": group_id})
+
+
+@sleep_and_retry
+@limits(calls=100, period=60)
+def fetch_property_hostnames(
+    session: requests.Session, base_url: str, property_id: str, version: int, contract_id: str, group_id: str
+) -> requests.Response:
+    url = urljoin(base_url, f"/papi/v1/properties/{property_id}/versions/{version}/hostnames")
+    return session.get(url, params={"contractId": contract_id, "groupId": group_id})
+
+
+@sleep_and_retry
+@limits(calls=100, period=60)
+def fetch_property_rules(
+    session: requests.Session, base_url: str, property_id: str, version: int, contract_id: str, group_id: str
+) -> requests.Response:
+    url = urljoin(base_url, f"/papi/v1/properties/{property_id}/versions/{version}/rules")
+    return session.get(url, params={"contractId": contract_id, "groupId": group_id})
+
+
+@sleep_and_retry
+@limits(calls=100, period=60)
+def fetch_property_activations(
+    session: requests.Session, base_url: str, property_id: str, contract_id: str, group_id: str
+) -> requests.Response:
+    url = urljoin(base_url, f"/papi/v1/properties/{property_id}/activations")
+    return session.get(url, params={"contractId": contract_id, "groupId": group_id})
+
+
+@sleep_and_retry
+@limits(calls=100, period=60)
+def resolve_hostname_via_google_dns(hostname: str, record_type: str) -> requests.Response:
+    return requests.get("https://dns.google/resolve", params={"name": hostname, "type": record_type}, timeout=10)
+
+
+def extract_behaviors(rules_node: dict[str, Any]) -> list[str]:
+    """Recursively collect every enabled behavior name from a PAPI rule tree."""
+    names: list[str] = []
+
+    def walk(node: dict[str, Any]) -> None:
+        for behavior in node.get("behaviors", []) or []:
+            name = behavior.get("name")
+            if name:
+                names.append(name)
+        for child in node.get("children", []) or []:
+            walk(child)
+
+    walk(rules_node)
+    return sorted(set(names))
+
+
+def extract_origin_hostnames(rules_node: dict[str, Any]) -> list[str]:
+    """Recursively collect origin hostnames configured via the 'origin' behavior."""
+    origins: list[str] = []
+
+    def walk(node: dict[str, Any]) -> None:
+        for behavior in node.get("behaviors", []) or []:
+            if behavior.get("name") == "origin":
+                origin_hostname = behavior.get("options", {}).get("hostname")
+                if origin_hostname:
+                    origins.append(origin_hostname)
+        for child in node.get("children", []) or []:
+            walk(child)
+
+    walk(rules_node)
+    return sorted(set(origins))
+
+
+def summarize_activations(activation_items: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
+    """Return the most recent ACTIVE activation per network with its timestamp and user."""
+    latest: dict[str, dict[str, str]] = {}
+    for item in activation_items:
+        network = item.get("network")
+        if network not in {"STAGING", "PRODUCTION"} or item.get("status") != "ACTIVE":
+            continue
+        update_date = item.get("updateDate") or item.get("submitDate") or ""
+        current = latest.get(network)
+        if not current or update_date > current.get("updateDate", ""):
+            latest[network] = {
+                "updateDate": update_date,
+                "updatedByUser": item.get("updatedByUser", ""),
+            }
+    return latest
+
+
+def fetch_property_hostname_list(
+    session: requests.Session, base_url: str, contract_id: str, group_id: str, prop: dict[str, Any], job: Job
+) -> list[str]:
+    """Group #1: pull just the hostnames configured on a single property."""
+    property_id = prop.get("propertyId")
+    version = prop.get("latestVersion") or prop.get("productionVersion") or prop.get("stagingVersion")
+    if not property_id or not version:
+        return []
+
+    response = call_with_cooloff(
+        job,
+        f"fetching hostnames for property {property_id}",
+        fetch_property_hostnames,
+        session,
+        base_url,
+        property_id,
+        version,
+        contract_id,
+        group_id,
+    )
+    if response.status_code != 200:
+        return []
+
+    return [
+        item.get("cnameFrom", "")
+        for item in response.json().get("hostnames", {}).get("items", [])
+        if item.get("cnameFrom")
+    ]
+
+
+def fetch_hostnames_stage(
+    session: requests.Session, base_url: str, property_tasks: list[tuple[str, str, dict[str, Any]]], job: Job
+) -> dict[str, list[str]]:
+    """Group #1: pull hostnames for every property in parallel, reporting progress as each completes."""
+    total = len(property_tasks)
+    job.log(f"Group 1/3: fetching hostnames for {total} properties...", percent=10)
+
+    results: dict[str, list[str]] = {}
+    completed = 0
+
+    with ThreadPoolExecutor(max_workers=PROPERTY_WORKER_COUNT) as executor:
+        futures = {
+            executor.submit(fetch_property_hostname_list, session, base_url, contract_id, group_id, prop, job): prop
+            for contract_id, group_id, prop in property_tasks
+        }
+        for future in as_completed(futures):
+            prop = futures[future]
+            property_id = prop.get("propertyId")
+            property_name = prop.get("propertyName", property_id)
+            completed += 1
+            percent = 10 + int(25 * completed / max(total, 1))
+            try:
+                results[property_id] = future.result()
+                job.log(f"[Hostnames] '{property_name}' done ({completed}/{total})", level="success", percent=percent)
+            except Exception as error:
+                results[property_id] = []
+                job.log(f"[Hostnames] '{property_name}' failed ({completed}/{total}): {error}", level="error", percent=percent)
+
+    job.log("Group 1/3 complete: hostnames fetched", level="success", percent=35)
+    return results
+
+
+def fetch_property_activation_summary(
+    session: requests.Session, base_url: str, contract_id: str, group_id: str, prop: dict[str, Any], job: Job
+) -> dict[str, dict[str, str]]:
+    """Group #2: pull staging/production activation history for a single property."""
+    property_id = prop.get("propertyId")
+    if not property_id:
+        return {}
+
+    response = call_with_cooloff(
+        job,
+        f"fetching activations for property {property_id}",
+        fetch_property_activations,
+        session,
+        base_url,
+        property_id,
+        contract_id,
+        group_id,
+    )
+    if response.status_code != 200:
+        return {}
+
+    activation_items = response.json().get("activations", {}).get("items", [])
+    return summarize_activations(activation_items)
+
+
+def fetch_activations_stage(
+    session: requests.Session, base_url: str, property_tasks: list[tuple[str, str, dict[str, Any]]], job: Job
+) -> dict[str, dict[str, dict[str, str]]]:
+    """Group #2: pull activations for every property in parallel, reporting progress as each completes."""
+    total = len(property_tasks)
+    job.log(f"Group 2/3: fetching activations for {total} properties...", percent=35)
+
+    results: dict[str, dict[str, dict[str, str]]] = {}
+    completed = 0
+
+    with ThreadPoolExecutor(max_workers=PROPERTY_WORKER_COUNT) as executor:
+        futures = {
+            executor.submit(fetch_property_activation_summary, session, base_url, contract_id, group_id, prop, job): prop
+            for contract_id, group_id, prop in property_tasks
+        }
+        for future in as_completed(futures):
+            prop = futures[future]
+            property_id = prop.get("propertyId")
+            property_name = prop.get("propertyName", property_id)
+            completed += 1
+            percent = 35 + int(20 * completed / max(total, 1))
+            try:
+                results[property_id] = future.result()
+                job.log(f"[Activations] '{property_name}' done ({completed}/{total})", level="success", percent=percent)
+            except Exception as error:
+                results[property_id] = {}
+                job.log(f"[Activations] '{property_name}' failed ({completed}/{total}): {error}", level="error", percent=percent)
+
+    job.log("Group 2/3 complete: activations fetched", level="success", percent=55)
+    return results
+
+
+def fetch_property_features(
+    session: requests.Session, base_url: str, contract_id: str, group_id: str, prop: dict[str, Any], job: Job
+) -> dict[str, list[str]]:
+    """Group #3: pull the rule tree for a single property and extract behaviors + origin hostnames."""
+    property_id = prop.get("propertyId")
+    version = prop.get("latestVersion") or prop.get("productionVersion") or prop.get("stagingVersion")
+    if not property_id or not version:
+        return {"behaviors": [], "origins": []}
+
+    response = call_with_cooloff(
+        job,
+        f"fetching rules for property {property_id}",
+        fetch_property_rules,
+        session,
+        base_url,
+        property_id,
+        version,
+        contract_id,
+        group_id,
+    )
+    rules_root = response.json().get("rules", {}) if response.status_code == 200 else {}
+    return {"behaviors": extract_behaviors(rules_root), "origins": extract_origin_hostnames(rules_root)}
+
+
+def fetch_features_stage(
+    session: requests.Session, base_url: str, property_tasks: list[tuple[str, str, dict[str, Any]]], job: Job
+) -> dict[str, dict[str, list[str]]]:
+    """Group #3: pull rule-tree behaviors/origins for every property in parallel, reporting progress as each completes."""
+    total = len(property_tasks)
+    job.log(f"Group 3/3: fetching feature behaviors for {total} properties...", percent=55)
+
+    results: dict[str, dict[str, list[str]]] = {}
+    completed = 0
+
+    with ThreadPoolExecutor(max_workers=PROPERTY_WORKER_COUNT) as executor:
+        futures = {
+            executor.submit(fetch_property_features, session, base_url, contract_id, group_id, prop, job): prop
+            for contract_id, group_id, prop in property_tasks
+        }
+        for future in as_completed(futures):
+            prop = futures[future]
+            property_id = prop.get("propertyId")
+            property_name = prop.get("propertyName", property_id)
+            completed += 1
+            percent = 55 + int(20 * completed / max(total, 1))
+            try:
+                results[property_id] = future.result()
+                job.log(f"[Features] '{property_name}' done ({completed}/{total})", level="success", percent=percent)
+            except Exception as error:
+                results[property_id] = {"behaviors": [], "origins": []}
+                job.log(f"[Features] '{property_name}' failed ({completed}/{total}): {error}", level="error", percent=percent)
+
+    job.log("Group 3/3 complete: feature behaviors fetched", level="success", percent=75)
+    return results
+
+
+def discover_properties(
+    session: requests.Session, base_url: str, job: Job
+) -> list[tuple[str, str, dict[str, Any]]]:
+    """Walk every group/contract and list the distinct properties in the account."""
+    job.log("Fetching Akamai groups...", percent=2)
+    groups_response = call_with_cooloff(job, "fetching groups", fetch_papi_groups, session, base_url)
+    if groups_response.status_code != 200:
+        raise ValueError(f"PAPI groups request failed with status code {groups_response.status_code}")
+
+    groups = groups_response.json().get("groups", {}).get("items", [])
+    job.log(f"Fetched {len(groups)} groups successfully", level="success", percent=5)
+
+    property_tasks: list[tuple[str, str, dict[str, Any]]] = []
+    seen_properties: set[str] = set()
+
+    for group in groups:
+        group_id = group.get("groupId")
+        for contract_id in group.get("contractIds", []) or []:
+            properties_response = call_with_cooloff(
+                job,
+                f"fetching properties for group {group_id} / contract {contract_id}",
+                fetch_papi_properties,
+                session,
+                base_url,
+                contract_id,
+                group_id,
+            )
+            if properties_response.status_code != 200:
+                job.log(
+                    f"Failed to fetch properties for group {group_id} / contract {contract_id}",
+                    level="error",
+                )
+                continue
+
+            for prop in properties_response.json().get("properties", {}).get("items", []):
+                property_id = prop.get("propertyId")
+                if not property_id or property_id in seen_properties:
+                    continue
+                seen_properties.add(property_id)
+                property_tasks.append((contract_id, group_id, prop))
+
+    job.log(f"Discovered {len(property_tasks)} properties across all groups/contracts", level="success", percent=10)
+    return property_tasks
+
+
+def build_feature_matrix(session: requests.Session, base_url: str, job: Job) -> list[dict[str, Any]]:
+    """Discover every property, then fetch hostnames, activations and features as three separate parallel stages."""
+    property_tasks = discover_properties(session, base_url, job)
+
+    hostnames_by_property = fetch_hostnames_stage(session, base_url, property_tasks, job)
+    activations_by_property = fetch_activations_stage(session, base_url, property_tasks, job)
+    features_by_property = fetch_features_stage(session, base_url, property_tasks, job)
+
+    job.log("Combining property results into feature matrix...", percent=76)
+    rows: list[dict[str, Any]] = []
+
+    for contract_id, group_id, prop in property_tasks:
+        property_id = prop.get("propertyId")
+        version = prop.get("latestVersion") or prop.get("productionVersion") or prop.get("stagingVersion")
+        hostnames = hostnames_by_property.get(property_id) or [""]
+        activation_summary = activations_by_property.get(property_id) or {}
+        staging = activation_summary.get("STAGING", {})
+        production = activation_summary.get("PRODUCTION", {})
+        features = features_by_property.get(property_id) or {"behaviors": [], "origins": []}
+
+        for hostname in hostnames:
+            rows.append(
+                {
+                    "propertyId": property_id,
+                    "propertyName": prop.get("propertyName", ""),
+                    "contractId": contract_id,
+                    "groupId": group_id,
+                    "propertyVersion": version,
+                    "hostname": hostname,
+                    "originServers": ";".join(features["origins"]),
+                    "behaviors": ";".join(features["behaviors"]),
+                    "stagingActivatedAt": staging.get("updateDate", ""),
+                    "stagingActivatedBy": staging.get("updatedByUser", ""),
+                    "productionActivatedAt": production.get("updateDate", ""),
+                    "productionActivatedBy": production.get("updatedByUser", ""),
+                }
+            )
+
+    job.log("Feature matrix build complete", level="success", percent=78)
+    return rows
+
+
+def write_feature_matrix_csv(rows: list[dict[str, Any]]) -> Path:
+    path = get_storage_dir() / "featureMatrix.csv"
+    with path.open("w", newline="") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=FEATURE_MATRIX_COLUMNS)
+        writer.writeheader()
+        writer.writerows(rows)
+    return path
+
+
+def read_feature_matrix_csv() -> list[dict[str, str]]:
+    path = get_storage_dir() / "featureMatrix.csv"
+    if not path.exists():
+        return []
+    with path.open(newline="") as csv_file:
+        return list(csv.DictReader(csv_file))
+
+
+def resolve_hostname_cname_or_ip(hostname: str) -> dict[str, str]:
+    """Resolve a hostname's CNAME via Google Public DNS, falling back to its A record."""
+    try:
+        cname_response = resolve_hostname_via_google_dns(hostname, "CNAME")
+        cname_payload = cname_response.json() if cname_response.status_code == 200 else {}
+        cname_answer = next((a for a in cname_payload.get("Answer") or [] if a.get("type") == 5), None)
+        if cname_answer:
+            return {"hostname": hostname, "resolvedValue": cname_answer.get("data", "").rstrip("."), "recordType": "CNAME"}
+
+        a_response = resolve_hostname_via_google_dns(hostname, "A")
+        a_payload = a_response.json() if a_response.status_code == 200 else {}
+        a_answer = next((a for a in a_payload.get("Answer") or [] if a.get("type") == 1), None)
+        if a_answer:
+            return {"hostname": hostname, "resolvedValue": a_answer.get("data", ""), "recordType": "A"}
+
+        return {"hostname": hostname, "resolvedValue": "", "recordType": "NONE"}
+    except Exception:
+        return {"hostname": hostname, "resolvedValue": "", "recordType": "ERROR"}
+
+
+def resolve_hostnames_concurrent(hostnames: list[str], job: Job) -> list[dict[str, str]]:
+    """Resolve every hostname's CNAME/A record concurrently via a thread pool, logging progress."""
+    total = len(hostnames)
+    job.log(f"Resolving DNS for {total} hostnames via Google Public DNS...", percent=80)
+
+    results: list[dict[str, str]] = []
+    completed = 0
+
+    with ThreadPoolExecutor(max_workers=DNS_WORKER_COUNT) as executor:
+        futures = {executor.submit(resolve_hostname_cname_or_ip, hostname): hostname for hostname in hostnames}
+        for future in as_completed(futures):
+            hostname = futures[future]
+            completed += 1
+            percent = 80 + int(17 * completed / max(total, 1))
+            result = future.result()
+            level = "success" if result["recordType"] in {"CNAME", "A"} else "warning"
+            job.log(
+                f"Resolved {hostname} -> {result['recordType']} ({completed}/{total})",
+                level=level,
+                percent=percent,
+            )
+            results.append(result)
+
+    return results
+
+
+def write_host2cname_csv(rows: list[dict[str, str]]) -> Path:
+    path = get_storage_dir() / "host2cname.csv"
+    with path.open("w", newline="") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=HOST2CNAME_COLUMNS)
+        writer.writeheader()
+        writer.writerows(rows)
+    return path
+
+
+def get_account_hostname_cname_coverage(account_key: str, job: Job) -> dict[str, Any]:
+    job.log(f"Looking up Akamai account mapping for '{account_key}'...", percent=1)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    account_id = account_metadata["accountId"]
+    account_name = account_metadata["accountName"]
+    job.log(f"Resolved account '{account_key}' -> {account_name} ({account_id})", level="success", percent=2)
+
+    session, base_url = create_akamai_session()
+
+    job.log("Requesting Akamai identity access (account switch key)...", percent=3)
+    switch_key_response = call_with_cooloff(job, "requesting identity access", fetch_account_switch_keys, session, base_url, account_id)
+    if switch_key_response.status_code != 200:
+        raise ValueError(f"Identity API failed with status code {switch_key_response.status_code}")
+
+    selected_account = resolve_account_switch_key(switch_key_response.json(), account_id)
+    account_switch_key = selected_account.get("accountSwitchKey")
+    if not account_switch_key:
+        raise ValueError("Missing accountSwitchKey in identity response")
+
+    session.params = {"accountSwitchKey": account_switch_key}
+    job.log("Identity access granted", level="success", percent=5)
+
+    feature_matrix_rows = build_feature_matrix(session, base_url, job)
+    write_feature_matrix_csv(feature_matrix_rows)
+    job.log(f"Saved feature matrix ({len(feature_matrix_rows)} rows) to featureMatrix.csv", level="success", percent=79)
+
+    hostnames = sorted({row["hostname"] for row in feature_matrix_rows if row.get("hostname")})
+    host2cname_rows = resolve_hostnames_concurrent(hostnames, job)
+    write_host2cname_csv(host2cname_rows)
+    job.log("Saved host-to-CNAME mapping to host2cname.csv", level="success", percent=97)
+
+    cname_count = sum(1 for row in host2cname_rows if row["recordType"] == "CNAME")
+    a_record_count = sum(1 for row in host2cname_rows if row["recordType"] == "A")
+    unresolved_count = sum(1 for row in host2cname_rows if row["recordType"] in {"NONE", "ERROR"})
+
+    resolution_by_hostname = {row["hostname"]: row for row in host2cname_rows}
+    table_rows = [
+        {**matrix_row, **resolution_by_hostname.get(matrix_row["hostname"], {})}
+        for matrix_row in feature_matrix_rows
+        if matrix_row.get("hostname")
+    ]
+    properties = sorted({row.get("propertyName", "") for row in feature_matrix_rows if row.get("propertyName")})
+
+    job.log("Hostname CNAME coverage complete", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_name,
+        "accountId": account_id,
+        "totals": {
+            "hostnames": len(host2cname_rows),
+            "cname": cname_count,
+            "aRecord": a_record_count,
+            "unresolved": unresolved_count,
+        },
+        "properties": properties,
+        "hostnames": [row["hostname"] for row in host2cname_rows],
+        "rows": table_rows,
+    }
+
+
+CNAME_STATUS_RELATIVE_PATH = Path("REPORTS") / "CSVDATA" / "cname-status.csv"
+CONFIG_SUMMARY_RELATIVE_PATH = Path("REPORTS") / "CSVDATA" / "config-summary.csv"
+CSV_DATA_MODES = {"csv_data_local", "csv_data_remote"}
+
+
+def get_ns_config() -> dict[str, str]:
+    return {
+        "hostname": os.getenv("NS_HOSTNAME", ""),
+        "keyname": os.getenv("NS_KEYNAME", ""),
+        "key": os.getenv("NS_KEY", ""),
+        "cp_code": os.getenv("NS_CP_CODE", ""),
+        "base_path": os.getenv("NS_BASE_PATH", ""),
+    }
+
+
+def download_csv_from_netstorage(remote_path: str, local_path: Path, job: Job | None = None) -> None:
+    """Download a single report file from Akamai NetStorage into the local cache path.
+
+    Credentials are read from NS_HOSTNAME/NS_KEYNAME/NS_KEY/NS_CP_CODE env vars (never hardcoded)."""
+    try:
+        from akamai.netstorage import Netstorage
+    except ImportError as error:
+        raise ValueError(
+            "NetStorage SDK not installed; install the package that provides 'akamai.netstorage' to enable remote downloads"
+        ) from error
+
+    cfg = get_ns_config()
+    missing = [name for name in ("hostname", "keyname", "key") if not cfg[name]]
+    if missing:
+        raise ValueError(
+            f"Missing NetStorage credentials: {', '.join(missing)} (set NS_HOSTNAME/NS_KEYNAME/NS_KEY env vars)"
+        )
+
+    debug_context = (
+        f"ns_hostname={cfg['hostname']!r} keyname={cfg['keyname']!r} cp_code={cfg['cp_code']!r} "
+        f"remote_path={remote_path!r} local_path={local_path}"
+    )
+
+    if job:
+        job.log(f"Downloading {remote_path} from NetStorage... [{debug_context}]", percent=20)
+
+    netstorage = Netstorage(cfg["hostname"], cfg["keyname"], cfg["key"])
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        ok, result = netstorage.download(remote_path, str(local_path))
+    except ValueError:
+        # Some SDK versions return a single value instead of an (ok, response) tuple.
+        try:
+            result = netstorage.download(remote_path, str(local_path))
+            ok = None
+        except Exception as error:
+            raise ValueError(
+                f"NetStorage download raised an error [{debug_context}]: {type(error).__name__}: {error}"
+            ) from error
+    except Exception as error:
+        raise ValueError(
+            f"NetStorage download raised an error [{debug_context}]: {type(error).__name__}: {error}"
+        ) from error
+
+    status_code = getattr(result, "status_code", None)
+    reason = getattr(result, "reason", None)
+    request_url = getattr(result, "url", None)
+    headers = getattr(result, "headers", None)
+
+    body_text: str | None = None
+    text_attr = getattr(result, "text", None)
+    if not callable(text_attr):
+        try:
+            body_text = text_attr
+        except Exception:
+            # The SDK streamed the response body directly to disk, so accessing
+            # .text again raises (e.g. requests.exceptions.StreamConsumedError).
+            body_text = "<response body already consumed by streaming download>"
+
+    if job:
+        job.log(
+            f"NetStorage response: ok={ok}, status={status_code}, reason={reason!r}, url={request_url!r}",
+            percent=30,
+        )
+
+    # The SDK's return value can be truthy even on failure (e.g. an HTTP response
+    # object), so verify the file actually landed on disk before trusting it, and
+    # surface as much detail from the response as possible for diagnosis.
+    if not local_path.exists() or local_path.stat().st_size == 0:
+        diagnostics = {
+            "resultType": type(result).__name__,
+            "ok": ok,
+            "statusCode": status_code,
+            "reason": reason,
+            "requestUrl": request_url,
+            "responseHeaders": dict(headers) if headers else None,
+            "responseBodySnippet": body_text[:500] if body_text else None,
+        }
+        diagnostics_str = ", ".join(f"{k}={v!r}" for k, v in diagnostics.items() if v is not None)
+        hint = ""
+        if status_code == 404:
+            hint = " Hint: 404 usually means the remote path or CP code is wrong."
+        elif status_code == 403:
+            hint = " Hint: 403 usually means invalid NetStorage credentials or ACL/upload-dir restriction."
+
+        raise ValueError(
+            f"NetStorage download did not produce a file at {local_path} for remote path {remote_path} "
+            f"[{debug_context}]. Diagnostics: {diagnostics_str or 'no additional response details available'}.{hint}"
+        )
+
+    if job:
+        job.log(
+            f"Downloaded {remote_path} -> {local_path.name} ({local_path.stat().st_size} bytes)",
+            level="success",
+            percent=45,
+        )
+
+
+def resolve_report_csv_path(
+    account_key: str, data_mode: str, relative_path: Path, job: Job | None = None, context: str | None = None
+) -> Path:
+    """Resolve (and, for remote mode, lazily download/cache) a per-account report CSV path.
+
+    `context`, when provided, overrides the NS_BASE_PATH env var for this request only."""
+    if data_mode not in CSV_DATA_MODES:
+        raise ValueError(f"Invalid data mode: {data_mode}. Expected one of {sorted(CSV_DATA_MODES)}")
+
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    account_dir = account_metadata.get("csvAccountDir") or account_key
+    account_relative_path = Path(account_dir) / relative_path
+    local_path = get_storage_dir() / data_mode / account_relative_path
+
+    if data_mode == "csv_data_remote" and not local_path.exists():
+        cfg = get_ns_config()
+        cp_code = cfg["cp_code"]
+        base_path = context if context is not None and context.strip() else cfg["base_path"]
+        if not cp_code and job:
+            job.log(
+                "NS_CP_CODE is not set; the remote path will have no CP-code prefix. "
+                "If NetStorage requires one, set NS_CP_CODE.",
+                level="warning",
+            )
+        if not base_path and job:
+            job.log(
+                "NS_BASE_PATH is not set; the remote path will have no base-path segment. "
+                "If NetStorage requires one, set NS_BASE_PATH.",
+                level="warning",
+            )
+        remote_path = "/" + "/".join(
+            part for part in [cp_code, base_path, *account_relative_path.parts] if part
+        )
+        if job:
+            job.log(
+                f"Attempting NetStorage download: remote_path={remote_path!r}, "
+                f"local_path={local_path}, cp_code={cp_code!r}, base_path={base_path!r}",
+                percent=15,
+            )
+        download_csv_from_netstorage(remote_path, local_path, job)
+    elif job:
+        job.log(f"Using cached CSV at {local_path}", percent=20)
+
+    if not local_path.exists():
+        raise FileNotFoundError(
+            f"CSV report not found: {local_path} (data_mode={data_mode}, account_dir={account_dir}, "
+            f"relative_path={relative_path})"
+        )
+
+    return local_path
+
+
+def read_csv_as_json(path: Path) -> tuple[list[str], list[dict[str, str]]]:
+    """Read a CSV file, preserving its header row as the JSON column names."""
+    with path.open(newline="", encoding="utf-8") as csv_file:
+        reader = csv.DictReader(csv_file)
+        columns = list(reader.fieldnames or [])
+        rows = [dict(row) for row in reader]
+    return columns, rows
+
+
+def is_hostname_covered(row: dict[str, str]) -> bool:
+    """A hostname is considered covered when it has a non-empty, non-placeholder cnameTo value."""
+    cname_to = (row.get("cnameTo") or "").strip()
+    return bool(cname_to) and cname_to != "-"
+
+
+def get_account_hostname_cname_matrix(
+    account_key: str, data_mode: str, job: Job, context: str | None = None
+) -> dict[str, Any]:
+    """Build the hostname/CNAME matrix for an account from the config-summary.csv report."""
+    job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    job.log(f"Resolving config-summary.csv location ({data_mode})...", percent=8)
+    csv_path = resolve_report_csv_path(account_key, data_mode, CONFIG_SUMMARY_RELATIVE_PATH, job, context)
+
+    job.log(f"Reading {csv_path.name}...", percent=60)
+    columns, rows = read_csv_as_json(csv_path)
+
+    hostnames = sorted({row.get("hostname", "") for row in rows if row.get("hostname")})
+
+    job.log("Hostname CNAME matrix ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "columns": columns,
+        "hostnames": hostnames,
+        "rows": rows,
+        "totals": {"rows": len(rows), "hostnames": len(hostnames)},
+    }
+
+
+def get_account_hostname_cname_matrix_summary(
+    account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
+) -> dict[str, Any]:
+    """Summarize the config-summary.csv report: covered/not-covered totals plus a per-column value breakdown."""
+    if job:
+        job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    if job:
+        job.log(f"Resolving config-summary.csv location ({data_mode})...", percent=8)
+    csv_path = resolve_report_csv_path(account_key, data_mode, CONFIG_SUMMARY_RELATIVE_PATH, job, context)
+
+    if job:
+        job.log(f"Reading {csv_path.name}...", percent=60)
+    columns, rows = read_csv_as_json(csv_path)
+
+    if job:
+        job.log("Computing summary breakdowns...", percent=80)
+    total_rows = len(rows)
+    hostnames = sorted({row.get("hostname", "") for row in rows if row.get("hostname")})
+    covered_count = sum(1 for row in rows if is_hostname_covered(row))
+    not_covered_count = total_rows - covered_count
+
+    breakdowns: dict[str, list[dict[str, Any]]] = {}
+    for column in columns:
+        value_counts: dict[str, int] = {}
+        for row in rows:
+            value = (row.get(column) or "").strip() or "(blank)"
+            value_counts[value] = value_counts.get(value, 0) + 1
+        breakdowns[column] = [
+            {"value": value, "count": count}
+            for value, count in sorted(value_counts.items(), key=lambda item: item[1], reverse=True)
+        ]
+
+    if job:
+        job.log("Hostname CNAME matrix summary ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "columns": columns,
+        "totals": {
+            "rows": total_rows,
+            "hostnames": len(hostnames),
+            "covered": covered_count,
+            "notCovered": not_covered_count,
+        },
+        "breakdowns": breakdowns,
+    }
+
+
+CONFIG_AUDIT_RELATIVE_PATH = Path("REPORTS") / "CSVDATA" / "config-audit.csv"
+
+# Every other column in config-audit.csv is treated as a feature toggle/setting.
+FEATURE_MATRIX_BASE_COLUMNS = [
+    "propertyName",
+    "propertyVersion",
+    "productionStatus",
+    "stagingStatus",
+    "contractId",
+    "propertyId",
+    "ruleFormat",
+    "securityOptions",
+]
+FEATURE_MATRIX_BASE_COLUMN_SET = set(FEATURE_MATRIX_BASE_COLUMNS)
+FEATURE_MATRIX_ABSENT_VALUES = {"false", "disabled", "none", "n/a", "-"}
+
+
+def get_feature_matrix_columns(columns: list[str]) -> list[str]:
+    """Every config-audit.csv column that isn't a base property attribute is a feature."""
+    return [column for column in columns if column not in FEATURE_MATRIX_BASE_COLUMN_SET]
+
+
+def is_feature_value_present(raw_value: str | None) -> bool:
+    """A feature is considered enabled/present when its cell is non-blank and not an explicit off value."""
+    value = (raw_value or "").strip()
+    if not value:
+        return False
+    return value.lower() not in FEATURE_MATRIX_ABSENT_VALUES
+
+
+def get_account_feature_matrix(
+    account_key: str, data_mode: str, job: Job, context: str | None = None
+) -> dict[str, Any]:
+    """Build the property/feature matrix for an account from the config-audit.csv report."""
+    job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    job.log(f"Resolving config-audit.csv location ({data_mode})...", percent=8)
+    csv_path = resolve_report_csv_path(account_key, data_mode, CONFIG_AUDIT_RELATIVE_PATH, job, context)
+
+    job.log(f"Reading {csv_path.name}...", percent=60)
+    columns, rows = read_csv_as_json(csv_path)
+    feature_columns = get_feature_matrix_columns(columns)
+    properties = sorted({row.get("propertyName", "") for row in rows if row.get("propertyName")})
+
+    job.log("Feature matrix ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "columns": columns,
+        "baseColumns": [column for column in FEATURE_MATRIX_BASE_COLUMNS if column in columns],
+        "featureColumns": feature_columns,
+        "properties": properties,
+        "rows": rows,
+        "totals": {"rows": len(rows), "properties": len(properties), "features": len(feature_columns)},
+    }
+
+
+def get_account_feature_matrix_summary(
+    account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
+) -> dict[str, Any]:
+    """Summarize config-audit.csv: overall feature adoption plus an enabled/disabled breakdown per feature."""
+    if job:
+        job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    if job:
+        job.log(f"Resolving config-audit.csv location ({data_mode})...", percent=8)
+    csv_path = resolve_report_csv_path(account_key, data_mode, CONFIG_AUDIT_RELATIVE_PATH, job, context)
+
+    if job:
+        job.log(f"Reading {csv_path.name}...", percent=60)
+    columns, rows = read_csv_as_json(csv_path)
+    feature_columns = get_feature_matrix_columns(columns)
+    properties = sorted({row.get("propertyName", "") for row in rows if row.get("propertyName")})
+
+    if job:
+        job.log("Computing feature adoption breakdowns...", percent=80)
+    total_rows = len(rows)
+    breakdowns: dict[str, list[dict[str, Any]]] = {}
+    overall_enabled = 0
+    for column in feature_columns:
+        enabled_count = sum(1 for row in rows if is_feature_value_present(row.get(column)))
+        disabled_count = total_rows - enabled_count
+        overall_enabled += enabled_count
+        breakdowns[column] = [
+            {"value": "Enabled", "count": enabled_count},
+            {"value": "Disabled", "count": disabled_count},
+        ]
+    overall_total_cells = total_rows * len(feature_columns)
+    overall_disabled = overall_total_cells - overall_enabled
+
+    if job:
+        job.log("Feature matrix summary ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "columns": columns,
+        "featureColumns": feature_columns,
+        "totals": {
+            "rows": total_rows,
+            "properties": len(properties),
+            "features": len(feature_columns),
+            "enabled": overall_enabled,
+            "disabled": overall_disabled,
+        },
+        "breakdowns": breakdowns,
+    }
+
+
+def get_account_feature_matrix_scorecard(
+    account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
+) -> dict[str, Any]:
+    """Build the featureMatrix scoreCard JSON: per-feature count and the properties that have it set."""
+    if job:
+        job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    if job:
+        job.log(f"Resolving config-audit.csv location ({data_mode})...", percent=8)
+    csv_path = resolve_report_csv_path(account_key, data_mode, CONFIG_AUDIT_RELATIVE_PATH, job, context)
+
+    if job:
+        job.log(f"Reading {csv_path.name}...", percent=60)
+    columns, rows = read_csv_as_json(csv_path)
+    feature_columns = get_feature_matrix_columns(columns)
+    properties = sorted({row.get("propertyName", "") for row in rows if row.get("propertyName")})
+
+    if job:
+        job.log("Building scoreCard...", percent=80)
+    feature_matrix: list[dict[str, Any]] = []
+    for column in feature_columns:
+        property_entries = [
+            {"propertyName": row.get("propertyName", ""), "status": (row.get(column) or "").strip()}
+            for row in rows
+            if (row.get(column) or "").strip()
+        ]
+        feature_matrix.append(
+            {"featureName": column, "count": len(property_entries), "properties": property_entries}
+        )
+
+    if job:
+        job.log("Feature matrix scoreCard ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "featureMatrix": feature_matrix,
+        "totals": {"properties": len(properties), "features": len(feature_columns)},
+    }
+
+
+TRAFFIC_REPORT_RELATIVE_PATH = Path("REPORTS") / "CSVDATA" / "traffic-report-hits-by-hostname.csv"
+
+# Raw CSV header -> short metric key used in totals/scoreCard output.
+TRAFFIC_MATRIX_METRIC_KEYS = {
+    "edgeHits (7days)": "edgeHits",
+    "originHits (7days)": "originHits",
+    "edgeBytes (7days)": "edgeBytes",
+    "originBytes (7days)": "originBytes",
+    "hitsOffload (7days)": "hitsOffload",
+    "bytesOffload (7days)": "bytesOffload",
+}
+
+
+def to_float(raw_value: str | None) -> float:
+    try:
+        return float(raw_value) if raw_value not in (None, "") else 0.0
+    except ValueError:
+        return 0.0
+
+
+def get_account_traffic_matrix(
+    account_key: str, data_mode: str, job: Job, context: str | None = None
+) -> dict[str, Any]:
+    """Build the hostname traffic matrix for an account from the traffic-report-hits-by-hostname.csv report."""
+    job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    job.log(f"Resolving traffic-report-hits-by-hostname.csv location ({data_mode})...", percent=8)
+    csv_path = resolve_report_csv_path(account_key, data_mode, TRAFFIC_REPORT_RELATIVE_PATH, job, context)
+
+    job.log(f"Reading {csv_path.name}...", percent=60)
+    columns, rows = read_csv_as_json(csv_path)
+    metric_columns = [column for column in columns if column in TRAFFIC_MATRIX_METRIC_KEYS]
+    base_columns = [column for column in columns if column not in TRAFFIC_MATRIX_METRIC_KEYS]
+    hostnames = sorted({row.get("hostname", "") for row in rows if row.get("hostname")})
+
+    job.log("Traffic matrix ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "columns": columns,
+        "baseColumns": base_columns,
+        "metricColumns": metric_columns,
+        "hostnames": hostnames,
+        "rows": rows,
+        "totals": {"rows": len(rows), "hostnames": len(hostnames)},
+    }
+
+
+def get_account_traffic_matrix_summary(
+    account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
+) -> dict[str, Any]:
+    """Summarize traffic-report-hits-by-hostname.csv: totals per metric plus top-hostname breakdowns."""
+    if job:
+        job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    if job:
+        job.log(f"Resolving traffic-report-hits-by-hostname.csv location ({data_mode})...", percent=8)
+    csv_path = resolve_report_csv_path(account_key, data_mode, TRAFFIC_REPORT_RELATIVE_PATH, job, context)
+
+    if job:
+        job.log(f"Reading {csv_path.name}...", percent=60)
+    columns, rows = read_csv_as_json(csv_path)
+    metric_columns = [column for column in columns if column in TRAFFIC_MATRIX_METRIC_KEYS]
+    hostnames = sorted({row.get("hostname", "") for row in rows if row.get("hostname")})
+
+    if job:
+        job.log("Computing traffic totals and breakdowns...", percent=80)
+    totals: dict[str, Any] = {"hostnames": len(hostnames)}
+    breakdowns: dict[str, list[dict[str, Any]]] = {}
+    for column in metric_columns:
+        metric_key = TRAFFIC_MATRIX_METRIC_KEYS[column]
+        values = [(row.get("hostname", ""), to_float(row.get(column))) for row in rows]
+        totals[metric_key] = sum(value for _, value in values)
+
+        top_values = sorted(values, key=lambda item: item[1], reverse=True)[:10]
+        other_total = sum(value for _, value in values) - sum(value for _, value in top_values)
+        breakdown = [{"value": hostname, "count": value} for hostname, value in top_values]
+        if len(values) > len(top_values) and other_total > 0:
+            breakdown.append({"value": "Other", "count": other_total})
+        breakdowns[metric_key] = breakdown
+
+    if job:
+        job.log("Traffic matrix summary ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "metricColumns": [TRAFFIC_MATRIX_METRIC_KEYS[column] for column in metric_columns],
+        "totals": totals,
+        "breakdowns": breakdowns,
+    }
+
+
+def get_account_traffic_matrix_scorecard(
+    account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
+) -> dict[str, Any]:
+    """Build the trafficMatrix scoreCard JSON: overall totals plus a per-hostname metric breakdown."""
+    if job:
+        job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    if job:
+        job.log(f"Resolving traffic-report-hits-by-hostname.csv location ({data_mode})...", percent=8)
+    csv_path = resolve_report_csv_path(account_key, data_mode, TRAFFIC_REPORT_RELATIVE_PATH, job, context)
+
+    if job:
+        job.log(f"Reading {csv_path.name}...", percent=60)
+    columns, rows = read_csv_as_json(csv_path)
+    metric_columns = [column for column in columns if column in TRAFFIC_MATRIX_METRIC_KEYS]
+
+    if job:
+        job.log("Building scoreCard...", percent=80)
+    totals: dict[str, Any] = {"hostnames": 0}
+    for column in metric_columns:
+        totals[TRAFFIC_MATRIX_METRIC_KEYS[column]] = 0.0
+
+    hostname_entries: list[dict[str, Any]] = []
+    seen_hostnames: set[str] = set()
+    for row in rows:
+        hostname = row.get("hostname", "")
+        if not hostname or hostname in seen_hostnames:
+            continue
+        seen_hostnames.add(hostname)
+        entry: dict[str, Any] = {"hostname": hostname}
+        for column in metric_columns:
+            metric_key = TRAFFIC_MATRIX_METRIC_KEYS[column]
+            value = to_float(row.get(column))
+            entry[metric_key] = value
+            totals[metric_key] += value
+        hostname_entries.append(entry)
+    totals["hostnames"] = len(hostname_entries)
+
+    if job:
+        job.log("Traffic matrix scoreCard ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "totals": totals,
+        "hostnames": hostname_entries,
+    }
+
+
 def get_server_mode() -> str:
     return (os.getenv("SERVER_DATA_MODE") or "mock").lower()
 
 
-def get_google_config() -> dict[str, str | None]:
+# ----------------------------------------------------------------------------
+# perfMatrix: Core Web Vitals per config-summary.csv hostname, via CrUX (with a
+# PageSpeed Insights fallback for origins with no CrUX field data).
+# ----------------------------------------------------------------------------
+
+CRUX_METRICS = ["largest_contentful_paint", "interaction_to_next_paint", "cumulative_layout_shift"]
+
+# web.dev Core Web Vitals thresholds: (good upper bound, needs-improvement upper bound).
+CWV_THRESHOLDS: dict[str, tuple[float, float]] = {
+    "lcpMs": (2500, 4000),
+    "inpMs": (200, 500),
+    "cls": (0.1, 0.25),
+}
+
+PERF_MATRIX_MAX_HOSTNAMES = int(os.getenv("PERF_MATRIX_MAX_HOSTNAMES") or 40)
+PERF_MATRIX_WORKER_COUNT = int(os.getenv("PERF_MATRIX_WORKERS") or 5)
+
+
+def get_crux_config() -> dict[str, str]:
+    return {"api_key": os.getenv("CRUX_API_KEY", "")}
+
+
+def classify_cwv(metric_key: str, value: float | None) -> str | None:
+    if value is None:
+        return None
+    good_max, needs_improvement_max = CWV_THRESHOLDS[metric_key]
+    if value <= good_max:
+        return "good"
+    if value <= needs_improvement_max:
+        return "needs-improvement"
+    return "poor"
+
+
+@sleep_and_retry
+@limits(calls=int(os.getenv("CRUX_RATE_LIMIT_CALLS") or 100), period=60)
+def fetch_crux_record(session: requests.Session, hostname: str, api_key: str) -> requests.Response:
+    """Current (rolling 28-day) CrUX field data snapshot for an origin."""
+    url = "https://chromeuxreport.googleapis.com/v1/records:queryRecord"
+    payload = {"origin": f"https://{hostname}", "metrics": CRUX_METRICS}
+    return session.post(url, params={"key": api_key}, json=payload, timeout=15)
+
+
+@sleep_and_retry
+@limits(calls=int(os.getenv("CRUX_RATE_LIMIT_CALLS") or 100), period=60)
+def fetch_crux_history_record(session: requests.Session, hostname: str, api_key: str) -> requests.Response:
+    """Historical progression of 28-day CrUX snapshots (weekly cadence) for an origin."""
+    url = "https://chromeuxreport.googleapis.com/v1/records:queryHistoryRecord"
+    payload = {"origin": f"https://{hostname}", "metrics": CRUX_METRICS}
+    return session.post(url, params={"key": api_key}, json=payload, timeout=15)
+
+
+@sleep_and_retry
+@limits(calls=int(os.getenv("PSI_RATE_LIMIT_CALLS") or 10), period=60)
+def fetch_pagespeed_insights(session: requests.Session, hostname: str, api_key: str) -> requests.Response:
+    """Synthetic Lighthouse lab-data fallback for origins with no CrUX field data."""
+    url = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
+    target_url = hostname if hostname.startswith("http") else f"https://{hostname}"
+    params = {"url": target_url, "key": api_key, "strategy": "mobile", "category": "performance"}
+    return session.get(url, params=params, timeout=90)
+
+
+def _coerce_metric_value(value: Any) -> float | None:
+    """CrUX returns most percentiles as numbers, but CLS as a string (e.g. "0.05") - normalize both."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def extract_current_cwv_from_crux(record: dict[str, Any]) -> dict[str, float | None]:
+    metrics = record.get("metrics", {})
+    return {
+        "lcpMs": _coerce_metric_value(metrics.get("largest_contentful_paint", {}).get("percentiles", {}).get("p75")),
+        "inpMs": _coerce_metric_value(metrics.get("interaction_to_next_paint", {}).get("percentiles", {}).get("p75")),
+        "cls": _coerce_metric_value(metrics.get("cumulative_layout_shift", {}).get("percentiles", {}).get("p75")),
+    }
+
+
+def extract_cwv_history_from_crux(record: dict[str, Any]) -> list[dict[str, Any]]:
+    """Zip CrUX history's per-metric percentile timeseries with their collection periods."""
+    metrics = record.get("metrics", {})
+    periods = record.get("collectionPeriods", [])
+    lcp_series = metrics.get("largest_contentful_paint", {}).get("percentilesTimeseries", {}).get("p75s", [])
+    inp_series = metrics.get("interaction_to_next_paint", {}).get("percentilesTimeseries", {}).get("p75s", [])
+    cls_series = metrics.get("cumulative_layout_shift", {}).get("percentilesTimeseries", {}).get("p75s", [])
+
+    history: list[dict[str, Any]] = []
+    for index, period in enumerate(periods):
+        last_date = period.get("lastDate", {})
+        year, month, day = last_date.get("year"), last_date.get("month"), last_date.get("day")
+        label = f"{year:04d}-{month:02d}-{day:02d}" if year and month and day else str(index)
+        history.append(
+            {
+                "period": label,
+                "lcpMs": _coerce_metric_value(lcp_series[index]) if index < len(lcp_series) else None,
+                "inpMs": _coerce_metric_value(inp_series[index]) if index < len(inp_series) else None,
+                "cls": _coerce_metric_value(cls_series[index]) if index < len(cls_series) else None,
+            }
+        )
+    return history
+
+
+def get_hostname_core_web_vitals(session: requests.Session, hostname: str, api_key: str) -> dict[str, Any]:
+    """Fetch current + historical Core Web Vitals for a hostname: CrUX first, PageSpeed Insights on 404."""
+    result: dict[str, Any] = {
+        "hostname": hostname,
+        "source": None,
+        "available": False,
+        "lcpMs": None,
+        "inpMs": None,
+        "cls": None,
+        "lcpRating": None,
+        "inpRating": None,
+        "clsRating": None,
+        "history": [],
+        "error": None,
+    }
+    if not api_key:
+        result["error"] = "CRUX_API_KEY not configured"
+        return result
+
+    try:
+        current_response = fetch_crux_record(session, hostname, api_key)
+    except requests.exceptions.RequestException as error:
+        result["error"] = f"CrUX request failed: {error}"
+        return result
+
+    if current_response.status_code == 200:
+        record = current_response.json().get("record", {})
+        result.update(extract_current_cwv_from_crux(record))
+        result["source"] = "crux"
+        result["available"] = True
+
+        try:
+            history_response = fetch_crux_history_record(session, hostname, api_key)
+            if history_response.status_code == 200:
+                result["history"] = extract_cwv_history_from_crux(history_response.json().get("record", {}))
+        except requests.exceptions.RequestException:
+            pass  # History is best-effort; the current snapshot metrics above still stand.
+
+    elif current_response.status_code == 404:
+        try:
+            psi_response = fetch_pagespeed_insights(session, hostname, api_key)
+        except requests.exceptions.RequestException as error:
+            result["error"] = f"PageSpeed Insights request failed: {error}"
+            psi_response = None
+
+        if psi_response is not None and psi_response.status_code == 200:
+            audits = psi_response.json().get("lighthouseResult", {}).get("audits", {})
+            result["lcpMs"] = _coerce_metric_value(audits.get("largest-contentful-paint", {}).get("numericValue"))
+            result["cls"] = _coerce_metric_value(audits.get("cumulative-layout-shift", {}).get("numericValue"))
+            # PSI lab runs have no INP equivalent; Total Blocking Time is the closest lab proxy.
+            result["inpMs"] = _coerce_metric_value(audits.get("total-blocking-time", {}).get("numericValue"))
+            result["source"] = "pagespeed"
+            result["available"] = True
+        elif not result["error"]:
+            result["error"] = "No CrUX field data and PageSpeed Insights fallback unavailable"
+    else:
+        result["error"] = f"CrUX API error {current_response.status_code}"
+
+    result["lcpRating"] = classify_cwv("lcpMs", result["lcpMs"])
+    result["inpRating"] = classify_cwv("inpMs", result["inpMs"])
+    result["clsRating"] = classify_cwv("cls", result["cls"])
+    return result
+
+
+def _fetch_core_web_vitals_for_hostnames(
+    hostnames: list[str], job: Job | None = None, start_percent: int = 15, end_percent: int = 85
+) -> dict[str, dict[str, Any]]:
+    """Shared helper: fetch CrUX/PSI Core Web Vitals concurrently for a fixed list of hostnames."""
+    cfg = get_crux_config()
+    if job and not cfg["api_key"]:
+        job.log(
+            "CRUX_API_KEY is not set in .env.server; Core Web Vitals will be unavailable for all hostnames",
+            level="warning",
+            percent=start_percent,
+        )
+
+    session = requests.Session()
+    perf_by_hostname: dict[str, dict[str, Any]] = {}
+    completed = 0
+    total = len(hostnames) or 1
+    percent_span = max(end_percent - start_percent, 0)
+
+    with ThreadPoolExecutor(max_workers=PERF_MATRIX_WORKER_COUNT) as executor:
+        futures = {
+            executor.submit(get_hostname_core_web_vitals, session, hostname, cfg["api_key"]): hostname
+            for hostname in hostnames
+        }
+        for future in as_completed(futures):
+            hostname = futures[future]
+            try:
+                perf = future.result()
+            except Exception as error:
+                perf = {
+                    "hostname": hostname,
+                    "source": None,
+                    "available": False,
+                    "lcpMs": None,
+                    "inpMs": None,
+                    "cls": None,
+                    "lcpRating": None,
+                    "inpRating": None,
+                    "clsRating": None,
+                    "history": [],
+                    "error": str(error),
+                }
+            perf_by_hostname[hostname] = perf
+            completed += 1
+            if job:
+                percent = start_percent + int(percent_span * completed / total)
+                status = "available" if perf["available"] else f"unavailable ({perf.get('error') or 'no data'})"
+                job.log(
+                    f"[{completed}/{total}] {hostname}: {status}",
+                    level="success" if perf["available"] else "warning",
+                    percent=percent,
+                )
+
+    return perf_by_hostname
+
+
+def _collect_account_perf_data(
+    account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
+) -> dict[str, Any]:
+    """Shared helper: read config-summary.csv hostnames and fetch CrUX/PSI Core Web Vitals for each."""
+    if job:
+        job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    if job:
+        job.log(f"Resolving config-summary.csv location ({data_mode})...", percent=5)
+    csv_path = resolve_report_csv_path(account_key, data_mode, CONFIG_SUMMARY_RELATIVE_PATH, job, context)
+
+    if job:
+        job.log(f"Reading {csv_path.name}...", percent=10)
+    columns, rows = read_csv_as_json(csv_path)
+    hostnames = sorted({row.get("hostname", "") for row in rows if row.get("hostname")})
+
+    processed_hostnames = hostnames[:PERF_MATRIX_MAX_HOSTNAMES]
+    if job and len(hostnames) > len(processed_hostnames):
+        job.log(
+            f"Found {len(hostnames)} hostnames; limiting live CrUX/PageSpeed lookups to the first "
+            f"{len(processed_hostnames)} (raise PERF_MATRIX_MAX_HOSTNAMES to change this)",
+            level="warning",
+            percent=12,
+        )
+
+    perf_by_hostname = _fetch_core_web_vitals_for_hostnames(processed_hostnames, job)
+
+    return {
+        "account_metadata": account_metadata,
+        "columns": columns,
+        "rows": rows,
+        "hostnames": hostnames,
+        "processed_hostnames": processed_hostnames,
+        "perf_by_hostname": perf_by_hostname,
+    }
+
+
+def _format_metric_value(value: float | None) -> str:
+    return "" if value is None else str(value)
+
+
+PERF_MATRIX_METRIC_COLUMNS = ["source", "lcpMs", "inpMs", "cls", "lcpRating", "inpRating", "clsRating"]
+PERF_MATRIX_TOPN_COUNT = int(os.getenv("PERF_MATRIX_TOPN_COUNT") or 10)
+
+
+def get_account_perf_matrix(
+    account_key: str, data_mode: str, job: Job, context: str | None = None
+) -> dict[str, Any]:
+    """Build the hostname/Core Web Vitals performance matrix from config-summary.csv + CrUX/PSI."""
+    collected = _collect_account_perf_data(account_key, data_mode, job, context)
+    account_metadata = collected["account_metadata"]
+    columns = collected["columns"]
+    perf_by_hostname = collected["perf_by_hostname"]
+
+    rows_out: list[dict[str, str]] = []
+    for row in collected["rows"]:
+        perf = perf_by_hostname.get(row.get("hostname", ""))
+        enriched = dict(row)
+        if perf:
+            enriched.update(
+                {
+                    "source": perf["source"] or "",
+                    "lcpMs": _format_metric_value(perf["lcpMs"]),
+                    "inpMs": _format_metric_value(perf["inpMs"]),
+                    "cls": _format_metric_value(perf["cls"]),
+                    "lcpRating": perf["lcpRating"] or "",
+                    "inpRating": perf["inpRating"] or "",
+                    "clsRating": perf["clsRating"] or "",
+                }
+            )
+        else:
+            enriched.update({column: "" for column in PERF_MATRIX_METRIC_COLUMNS})
+        rows_out.append(enriched)
+
+    series = {hostname: perf["history"] for hostname, perf in perf_by_hostname.items()}
+    available_count = sum(1 for perf in perf_by_hostname.values() if perf["available"])
+
+    job.log("Perf matrix ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "columns": columns + PERF_MATRIX_METRIC_COLUMNS,
+        "baseColumns": columns,
+        "metricColumns": PERF_MATRIX_METRIC_COLUMNS,
+        "hostnames": collected["hostnames"],
+        "rows": rows_out,
+        "series": series,
+        "totals": {
+            "hostnames": len(collected["hostnames"]),
+            "processed": len(collected["processed_hostnames"]),
+            "available": available_count,
+            "unavailable": len(collected["processed_hostnames"]) - available_count,
+        },
+    }
+
+
+def get_account_perf_matrix_summary(
+    account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
+) -> dict[str, Any]:
+    """Summarize Core Web Vitals: availability + per-metric rating breakdown, plus per-hostname trend series."""
+    collected = _collect_account_perf_data(account_key, data_mode, job, context)
+    account_metadata = collected["account_metadata"]
+    perf_by_hostname = collected["perf_by_hostname"]
+    perf_values = list(perf_by_hostname.values())
+
+    if job:
+        job.log("Computing Core Web Vitals summary...", percent=90)
+
+    available = [perf for perf in perf_values if perf["available"]]
+
+    def average(metric_key: str) -> float | None:
+        values = [perf[metric_key] for perf in available if perf.get(metric_key) is not None]
+        return round(sum(values) / len(values), 2) if values else None
+
+    totals = {
+        "hostnames": len(collected["hostnames"]),
+        "processed": len(collected["processed_hostnames"]),
+        "available": len(available),
+        "unavailable": len(perf_values) - len(available),
+        "lcpMsAvg": average("lcpMs"),
+        "inpMsAvg": average("inpMs"),
+        "clsAvg": average("cls"),
+    }
+
+    rating_labels = ["good", "needs-improvement", "poor"]
+    breakdowns: dict[str, list[dict[str, Any]]] = {}
+    for metric_key, rating_key in (("lcpMs", "lcpRating"), ("inpMs", "inpRating"), ("cls", "clsRating")):
+        counts = {label: 0 for label in rating_labels}
+        unavailable_count = 0
+        for perf in perf_values:
+            rating = perf.get(rating_key)
+            if rating in counts:
+                counts[rating] += 1
+            else:
+                unavailable_count += 1
+        breakdown = [{"value": label, "count": counts[label]} for label in rating_labels]
+        if unavailable_count:
+            breakdown.append({"value": "unavailable", "count": unavailable_count})
+        breakdowns[metric_key] = breakdown
+
+    series = {hostname: perf["history"] for hostname, perf in perf_by_hostname.items()}
+
+    if job:
+        job.log("Perf matrix summary ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "totals": totals,
+        "breakdowns": breakdowns,
+        "series": series,
+    }
+
+
+def get_account_perf_matrix_scorecard(
+    account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
+) -> dict[str, Any]:
+    """Build the perfMatrix scoreCard JSON: overall averaged Core Web Vitals plus per-hostname values."""
+    collected = _collect_account_perf_data(account_key, data_mode, job, context)
+    account_metadata = collected["account_metadata"]
+    perf_by_hostname = collected["perf_by_hostname"]
+    available = [perf for perf in perf_by_hostname.values() if perf["available"]]
+
+    if job:
+        job.log("Building scoreCard...", percent=90)
+
+    def average(metric_key: str) -> float | None:
+        values = [perf[metric_key] for perf in available if perf.get(metric_key) is not None]
+        return round(sum(values) / len(values), 2) if values else None
+
+    hostname_entries = [
+        {
+            "hostname": hostname,
+            "corewebvitals": {
+                "lcpMs": perf["lcpMs"],
+                "inpMs": perf["inpMs"],
+                "cls": perf["cls"],
+                "lcpRating": perf["lcpRating"],
+                "inpRating": perf["inpRating"],
+                "clsRating": perf["clsRating"],
+                "source": perf["source"],
+            },
+        }
+        for hostname, perf in perf_by_hostname.items()
+    ]
+
+    if job:
+        job.log("Perf matrix scoreCard ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "totals": {
+            "hostnames": len(collected["hostnames"]),
+            "corewebvitals": {
+                "lcpMsAvg": average("lcpMs"),
+                "inpMsAvg": average("inpMs"),
+                "clsAvg": average("cls"),
+            },
+        },
+        "hostnames": hostname_entries,
+    }
+
+
+# ----------------------------------------------------------------------------
+# perfMatrixTopN: same Core Web Vitals pipeline as perfMatrix, but scoped to only
+# the top N hostnames by edgeHits from traffic-report-hits-by-hostname.csv, since
+# live CrUX/PageSpeed lookups are too costly to run across every hostname.
+# ----------------------------------------------------------------------------
+
+
+def _collect_account_perf_topn_data(
+    account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
+) -> dict[str, Any]:
+    """Shared helper: pick the top N hostnames by edgeHits from traffic-report-hits-by-hostname.csv
+    and fetch CrUX/PSI Core Web Vitals only for those."""
+    if job:
+        job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    if job:
+        job.log(f"Resolving traffic-report-hits-by-hostname.csv location ({data_mode})...", percent=5)
+    csv_path = resolve_report_csv_path(account_key, data_mode, TRAFFIC_REPORT_RELATIVE_PATH, job, context)
+
+    if job:
+        job.log(f"Reading {csv_path.name}...", percent=10)
+    columns, rows = read_csv_as_json(csv_path)
+    edge_hits_column = next((column for column in columns if column.strip().lower().startswith("edgehits")), None)
+
+    seen_hostnames: set[str] = set()
+    unique_rows: list[dict[str, str]] = []
+    for row in rows:
+        hostname = row.get("hostname", "")
+        if not hostname or hostname in seen_hostnames:
+            continue
+        seen_hostnames.add(hostname)
+        unique_rows.append(row)
+
+    sort_key = (lambda row: to_float(row.get(edge_hits_column))) if edge_hits_column else (lambda row: 0.0)
+    top_rows = sorted(unique_rows, key=sort_key, reverse=True)[:PERF_MATRIX_TOPN_COUNT]
+    top_hostnames = [row.get("hostname", "") for row in top_rows]
+
+    if job:
+        job.log(
+            f"Selected top {len(top_hostnames)} of {len(unique_rows)} hostnames by edgeHits for "
+            "live CrUX/PageSpeed lookups (see PERF_MATRIX_TOPN_COUNT)",
+            percent=12,
+        )
+
+    perf_by_hostname = _fetch_core_web_vitals_for_hostnames(top_hostnames, job)
+
+    return {
+        "account_metadata": account_metadata,
+        "columns": columns,
+        "top_rows": top_rows,
+        "hostnames": top_hostnames,
+        "total_hostnames": len(unique_rows),
+        "perf_by_hostname": perf_by_hostname,
+    }
+
+
+def get_account_perf_matrix_topn(
+    account_key: str, data_mode: str, job: Job, context: str | None = None
+) -> dict[str, Any]:
+    """Build the Core Web Vitals table for only the top-N-by-traffic hostnames."""
+    collected = _collect_account_perf_topn_data(account_key, data_mode, job, context)
+    account_metadata = collected["account_metadata"]
+    columns = collected["columns"]
+    perf_by_hostname = collected["perf_by_hostname"]
+
+    rows_out: list[dict[str, str]] = []
+    for row in collected["top_rows"]:
+        perf = perf_by_hostname.get(row.get("hostname", ""))
+        enriched = dict(row)
+        if perf:
+            enriched.update(
+                {
+                    "source": perf["source"] or "",
+                    "lcpMs": _format_metric_value(perf["lcpMs"]),
+                    "inpMs": _format_metric_value(perf["inpMs"]),
+                    "cls": _format_metric_value(perf["cls"]),
+                    "lcpRating": perf["lcpRating"] or "",
+                    "inpRating": perf["inpRating"] or "",
+                    "clsRating": perf["clsRating"] or "",
+                }
+            )
+        else:
+            enriched.update({column: "" for column in PERF_MATRIX_METRIC_COLUMNS})
+        rows_out.append(enriched)
+
+    series = {hostname: perf["history"] for hostname, perf in perf_by_hostname.items()}
+    available_count = sum(1 for perf in perf_by_hostname.values() if perf["available"])
+
+    job.log("Perf matrix (Top N) ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "columns": columns + PERF_MATRIX_METRIC_COLUMNS,
+        "baseColumns": columns,
+        "metricColumns": PERF_MATRIX_METRIC_COLUMNS,
+        "hostnames": collected["hostnames"],
+        "rows": rows_out,
+        "series": series,
+        "totals": {
+            "hostnames": collected["total_hostnames"],
+            "topN": len(collected["hostnames"]),
+            "available": available_count,
+            "unavailable": len(collected["hostnames"]) - available_count,
+        },
+    }
+
+
+def get_account_perf_matrix_topn_summary(
+    account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
+) -> dict[str, Any]:
+    """Summarize Core Web Vitals for the top-N-by-traffic hostnames: availability + rating breakdowns."""
+    collected = _collect_account_perf_topn_data(account_key, data_mode, job, context)
+    account_metadata = collected["account_metadata"]
+    perf_by_hostname = collected["perf_by_hostname"]
+    perf_values = list(perf_by_hostname.values())
+
+    if job:
+        job.log("Computing Core Web Vitals summary...", percent=90)
+
+    available = [perf for perf in perf_values if perf["available"]]
+
+    def average(metric_key: str) -> float | None:
+        values = [perf[metric_key] for perf in available if perf.get(metric_key) is not None]
+        return round(sum(values) / len(values), 2) if values else None
+
+    totals = {
+        "hostnames": collected["total_hostnames"],
+        "topN": len(collected["hostnames"]),
+        "available": len(available),
+        "unavailable": len(perf_values) - len(available),
+        "lcpMsAvg": average("lcpMs"),
+        "inpMsAvg": average("inpMs"),
+        "clsAvg": average("cls"),
+    }
+
+    rating_labels = ["good", "needs-improvement", "poor"]
+    breakdowns: dict[str, list[dict[str, Any]]] = {}
+    for metric_key, rating_key in (("lcpMs", "lcpRating"), ("inpMs", "inpRating"), ("cls", "clsRating")):
+        counts = {label: 0 for label in rating_labels}
+        unavailable_count = 0
+        for perf in perf_values:
+            rating = perf.get(rating_key)
+            if rating in counts:
+                counts[rating] += 1
+            else:
+                unavailable_count += 1
+        breakdown = [{"value": label, "count": counts[label]} for label in rating_labels]
+        if unavailable_count:
+            breakdown.append({"value": "unavailable", "count": unavailable_count})
+        breakdowns[metric_key] = breakdown
+
+    series = {hostname: perf["history"] for hostname, perf in perf_by_hostname.items()}
+
+    if job:
+        job.log("Perf matrix (Top N) summary ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "totals": totals,
+        "breakdowns": breakdowns,
+        "series": series,
+    }
+
+
+def get_account_perf_matrix_topn_scorecard(
+    account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
+) -> dict[str, Any]:
+    """Build the perfMatrixTopN scoreCard JSON: averaged + per-hostname Core Web Vitals for the top-N hostnames."""
+    collected = _collect_account_perf_topn_data(account_key, data_mode, job, context)
+    account_metadata = collected["account_metadata"]
+    perf_by_hostname = collected["perf_by_hostname"]
+    available = [perf for perf in perf_by_hostname.values() if perf["available"]]
+
+    if job:
+        job.log("Building scoreCard...", percent=90)
+
+    def average(metric_key: str) -> float | None:
+        values = [perf[metric_key] for perf in available if perf.get(metric_key) is not None]
+        return round(sum(values) / len(values), 2) if values else None
+
+    hostname_entries = [
+        {
+            "hostname": hostname,
+            "corewebvitals": {
+                "lcpMs": perf["lcpMs"],
+                "inpMs": perf["inpMs"],
+                "cls": perf["cls"],
+                "lcpRating": perf["lcpRating"],
+                "inpRating": perf["inpRating"],
+                "clsRating": perf["clsRating"],
+                "source": perf["source"],
+            },
+        }
+        for hostname, perf in perf_by_hostname.items()
+    ]
+
+    if job:
+        job.log("Perf matrix (Top N) scoreCard ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "totals": {
+            "hostnames": len(collected["hostnames"]),
+            "corewebvitals": {
+                "lcpMsAvg": average("lcpMs"),
+                "inpMsAvg": average("inpMs"),
+                "clsAvg": average("cls"),
+            },
+        },
+        "hostnames": hostname_entries,
+    }
     return {
         "spreadsheet_id": os.getenv("GOOGLE_SHEETS_SPREADSHEET_ID"),
         "summary_metrics_range": os.getenv("GOOGLE_SHEETS_SUMMARY_METRICS_RANGE") or "SummaryMetrics!A:E",

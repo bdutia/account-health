@@ -86,8 +86,13 @@ npm run preview
 
 Build and run locally with path prefix:
 
-```bash
-docker build --build-arg VITE_APP_BASE_PATH=/account-health/ -t account-health:latest .
+```bash - lessons learnt: api string concat issue: always use: /account-health (no trailing slash, will be removed regarldess::workign version in docker local build: 
+*****************************************
+docker build --build-arg VITE_APP_BASE_PATH=/account-health -t account-health:latest .
+docker run --rm -p 4000:4000 --env-file .env.server -e APP_BASE_PATH=/account-health account-health:latest
+*************************************
+
+docker build --build-arg VITE_APP_BASE_PATH=/account-health -t account-health:latest .
 docker run --rm -p 4000:4000 --env-file .env.server -e APP_BASE_PATH=/account-health account-health:latest
 ```
 

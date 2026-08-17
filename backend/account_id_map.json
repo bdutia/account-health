@@ -1,6 +1,22 @@
 {
   "acme-corp": {
-    "accountName": "Acme Corp",
-    "accountId": "1-40SFN"
+    "accountName": "Deloitte Tohmatsu India Private Limited",
+    "accountId": "1-2TRO2",
+    "csvAccountDir": "test-account-dir"
+  },
+  "deloitte-tohoku": {
+    "accountName": "deloitte-tohoku",
+    "accountId": "deloitte-tohoku",
+    "csvAccountDir": "deloitte-tohoku"
+  },
+  "delta-airlines": {
+    "accountName": "delta-airlines",
+    "accountId": "delta-airlines",
+    "csvAccountDir": "delta-airlines"
+  },
+  "stellantis": {
+    "accountName": "stellantis",
+    "accountId": "stellantis",
+    "csvAccountDir": "stellantis"
   }
 }

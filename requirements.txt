@@ -5,4 +5,7 @@ google-api-python-client
 google-auth
 edgegrid-python
 requests
+netstorageapi
 ratelimit
+# Optional, only needed for ?data=csv_data_remote (Akamai NetStorage downloads):
+# install whichever package provides the `akamai.netstorage` module for your environment

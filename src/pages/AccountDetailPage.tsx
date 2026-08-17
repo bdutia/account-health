@@ -134,6 +134,97 @@ export function AccountDetailPage() {
             ) : null}
           </div>
 
+          <Link
+            className="mb-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/hostname-cname-coverage`}
+          >
+            Run Hostname &amp; CNAME Coverage Scan →
+          </Link>
+          <Link
+            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/hostmatrix/cname`}
+          >
+            View Hostname CNAME Matrix →
+          </Link>
+          <Link
+            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/hostmatrix/cname/summary`}
+          >
+            View Hostname CNAME Matrix Summary →
+          </Link>
+          <Link
+            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/featureMatrix`}
+          >
+            View Feature Matrix →
+          </Link>
+          <Link
+            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/featureMatrix/summary`}
+          >
+            View Feature Matrix Summary →
+          </Link>
+          <Link
+            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/featureMatrix/scoreCard`}
+          >
+            View Feature Matrix ScoreCard →
+          </Link>
+          <Link
+            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/trafficMatrix`}
+          >
+            View Traffic Matrix →
+          </Link>
+          <Link
+            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/trafficMatrix/summary`}
+          >
+            View Traffic Matrix Summary →
+          </Link>
+          <Link
+            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/trafficMatrix/scoreCard`}
+          >
+            View Traffic Matrix ScoreCard →
+          </Link>
+          <Link
+            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/perfMatrix`}
+          >
+            View Performance Matrix →
+          </Link>
+          <Link
+            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/perfMatrix/summary`}
+          >
+            View Performance Matrix Summary →
+          </Link>
+          <Link
+            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/perfMatrix/scoreCard`}
+          >
+            View Performance Matrix ScoreCard →
+          </Link>
+          <Link
+            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/perfMatrixTopN`}
+          >
+            View Performance Matrix (Top 10) →
+          </Link>
+          <Link
+            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/perfMatrixTopN/summary`}
+          >
+            View Performance Matrix (Top 10) Summary →
+          </Link>
+          <Link
+            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/perfMatrixTopN/scoreCard`}
+          >
+            View Performance Matrix (Top 10) ScoreCard →
+          </Link>
+
           {!hostnameCoverage ? (
             <p className="text-sm text-slate-600">
               Hostname coverage is unavailable for this account or this environment is not using backend mode.

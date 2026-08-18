@@ -172,6 +172,24 @@ export function AccountDetailPage() {
           </Link>
           <Link
             className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/secHostCoverageMatrix`}
+          >
+            View Security Host Coverage Matrix →
+          </Link>
+          <Link
+            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/secHostCoverageMatrix/summary`}
+          >
+            View Security Host Coverage Matrix Summary →
+          </Link>
+          <Link
+            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
+            to={`/account/${accountId}/secHostCoverageMatrix/scoreCard`}
+          >
+            View Security Host Coverage Matrix ScoreCard →
+          </Link>
+          <Link
+            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
             to={`/account/${accountId}/trafficMatrix`}
           >
             View Traffic Matrix →

@@ -1190,6 +1190,199 @@ def get_account_feature_matrix_scorecard(
     }
 
 
+HOSTNAME_COVERAGE_RELATIVE_PATH = Path("REPORTS") / "CSVDATA" / "hostname-coverage.csv"
+
+# Base identity columns; every other column in hostname-coverage.csv is a security metric
+# (e.g. Attack Groups in Alert/Deny, BMP/BMS/Custom Rules/Rate Policies/Reputation Categories counts).
+SEC_HOST_COVERAGE_BASE_COLUMNS = [
+    "hostname",
+    "status",
+    "configId",
+    "configName",
+    "configVersion",
+    "contract",
+    "hasMatchTarget",
+    "policyNames",
+    "policyIds",
+]
+SEC_HOST_COVERAGE_BASE_COLUMN_SET = set(SEC_HOST_COVERAGE_BASE_COLUMNS)
+
+
+def get_sec_host_coverage_metric_columns(columns: list[str]) -> list[str]:
+    """Every hostname-coverage.csv column that isn't a base identity attribute is a security metric."""
+    return [column for column in columns if column not in SEC_HOST_COVERAGE_BASE_COLUMN_SET]
+
+
+def is_sec_host_covered(row: dict[str, str]) -> bool:
+    """A hostname is considered covered when its status column is exactly 'covered'."""
+    return (row.get("status") or "").strip().lower() == "covered"
+
+
+def get_account_sec_host_coverage_matrix(
+    account_key: str, data_mode: str, job: Job, context: str | None = None
+) -> dict[str, Any]:
+    """Build the security hostname coverage matrix for an account from the hostname-coverage.csv report."""
+    job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    job.log(f"Resolving hostname-coverage.csv location ({data_mode})...", percent=8)
+    csv_path = resolve_report_csv_path(account_key, data_mode, HOSTNAME_COVERAGE_RELATIVE_PATH, job, context)
+
+    job.log(f"Reading {csv_path.name}...", percent=60)
+    columns, rows = read_csv_as_json(csv_path)
+    metric_columns = get_sec_host_coverage_metric_columns(columns)
+    hostnames = sorted({row.get("hostname", "") for row in rows if row.get("hostname")})
+    config_names = sorted({row.get("configName", "") for row in rows if row.get("configName")})
+    covered_count = sum(1 for row in rows if is_sec_host_covered(row))
+
+    job.log("Security host coverage matrix ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "columns": columns,
+        "baseColumns": [column for column in SEC_HOST_COVERAGE_BASE_COLUMNS if column in columns],
+        "metricColumns": metric_columns,
+        "hostnames": hostnames,
+        "configNames": config_names,
+        "rows": rows,
+        "totals": {
+            "rows": len(rows),
+            "hostnames": len(hostnames),
+            "configNames": len(config_names),
+            "covered": covered_count,
+            "notCovered": len(rows) - covered_count,
+        },
+    }
+
+
+def get_account_sec_host_coverage_matrix_summary(
+    account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
+) -> dict[str, Any]:
+    """Summarize hostname-coverage.csv: covered/not-covered totals, per-column breakdowns, and security metric totals
+    (e.g. Attack Groups in Alert (Count) / Attack Groups in Deny (Count))."""
+    if job:
+        job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    if job:
+        job.log(f"Resolving hostname-coverage.csv location ({data_mode})...", percent=8)
+    csv_path = resolve_report_csv_path(account_key, data_mode, HOSTNAME_COVERAGE_RELATIVE_PATH, job, context)
+
+    if job:
+        job.log(f"Reading {csv_path.name}...", percent=60)
+    columns, rows = read_csv_as_json(csv_path)
+    metric_columns = get_sec_host_coverage_metric_columns(columns)
+    total_rows = len(rows)
+    hostnames = sorted({row.get("hostname", "") for row in rows if row.get("hostname")})
+    covered_count = sum(1 for row in rows if is_sec_host_covered(row))
+    not_covered_count = total_rows - covered_count
+
+    if job:
+        job.log("Computing coverage breakdowns...", percent=80)
+    breakdowns: dict[str, list[dict[str, Any]]] = {}
+    for column in columns:
+        value_counts: dict[str, int] = {}
+        for row in rows:
+            value = (row.get(column) or "").strip() or "(blank)"
+            value_counts[value] = value_counts.get(value, 0) + 1
+        breakdowns[column] = [
+            {"value": value, "count": count}
+            for value, count in sorted(value_counts.items(), key=lambda item: item[1], reverse=True)
+        ]
+
+    metric_totals = {column: sum(to_float(row.get(column)) for row in rows) for column in metric_columns}
+
+    if job:
+        job.log("Security host coverage matrix summary ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "columns": columns,
+        "metricColumns": metric_columns,
+        "totals": {
+            "rows": total_rows,
+            "hostnames": len(hostnames),
+            "covered": covered_count,
+            "notCovered": not_covered_count,
+        },
+        "breakdowns": breakdowns,
+        "metricTotals": metric_totals,
+    }
+
+
+def get_account_sec_host_coverage_matrix_scorecard(
+    account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
+) -> dict[str, Any]:
+    """Build the secHostCoverageMatrix scoreCard JSON: one entry per unique configName with a hostname count plus
+    the hostnames that have Attack Groups in Alert / Attack Groups in Deny for that config."""
+    if job:
+        job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    if job:
+        job.log(f"Resolving hostname-coverage.csv location ({data_mode})...", percent=8)
+    csv_path = resolve_report_csv_path(account_key, data_mode, HOSTNAME_COVERAGE_RELATIVE_PATH, job, context)
+
+    if job:
+        job.log(f"Reading {csv_path.name}...", percent=60)
+    _columns, rows = read_csv_as_json(csv_path)
+
+    if job:
+        job.log("Building scoreCard...", percent=80)
+    groups: dict[str, list[dict[str, str]]] = {}
+    for row in rows:
+        config_name = (row.get("configName") or "").strip() or "(Not Covered)"
+        groups.setdefault(config_name, []).append(row)
+
+    sec_host_coverage_matrix: list[dict[str, Any]] = []
+    for config_name, group_rows in sorted(groups.items(), key=lambda item: item[0].lower()):
+        attack_group_alert = [
+            {"hostname": row.get("hostname", ""), "status": (row.get("Attack Groups in Alert") or "").strip()}
+            for row in group_rows
+            if to_float(row.get("Attack Groups in Alert")) > 0
+        ]
+        attack_group_deny = [
+            {"hostname": row.get("hostname", ""), "status": (row.get("Attack Groups in Deny") or "").strip()}
+            for row in group_rows
+            if to_float(row.get("Attack Groups in Deny")) > 0
+        ]
+        sec_host_coverage_matrix.append(
+            {
+                "configName": config_name,
+                "count": len(group_rows),
+                "attackGroupAlert": attack_group_alert,
+                "attackGroupDeny": attack_group_deny,
+            }
+        )
+
+    if job:
+        job.log("Security host coverage matrix scoreCard ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "secHostCoverageMatrix": sec_host_coverage_matrix,
+        "totals": {"hostnames": len(rows), "configNames": len(sec_host_coverage_matrix)},
+    }
+
+
 TRAFFIC_REPORT_RELATIVE_PATH = Path("REPORTS") / "CSVDATA" / "traffic-report-hits-by-hostname.csv"
 
 # Raw CSV header -> short metric key used in totals/scoreCard output.

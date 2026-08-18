@@ -16,6 +16,9 @@ from backend.data_service import (
     get_account_feature_matrix,
     get_account_feature_matrix_summary,
     get_account_feature_matrix_scorecard,
+    get_account_sec_host_coverage_matrix,
+    get_account_sec_host_coverage_matrix_summary,
+    get_account_sec_host_coverage_matrix_scorecard,
     get_account_traffic_matrix,
     get_account_traffic_matrix_summary,
     get_account_traffic_matrix_scorecard,
@@ -241,6 +244,76 @@ def feature_matrix_scorecard_json(
     """Synchronous scoreCard endpoint: featureName/count/properties JSON, no job/SSE wrapper."""
     try:
         return get_account_feature_matrix_scorecard(account_key, data, None, context)
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error))
+
+
+@app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/secHostCoverageMatrix/jobs')
+def start_sec_host_coverage_matrix_job(
+    account_key: str,
+    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    context: str | None = Query(None),
+) -> dict[str, object]:
+    job = job_manager.create()
+    job_manager.run_in_background(
+        job, lambda active_job: get_account_sec_host_coverage_matrix(account_key, data, active_job, context)
+    )
+    return {'jobId': job.job_id}
+
+
+@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/secHostCoverageMatrix/jobs/{{job_id}}/events')
+def stream_sec_host_coverage_matrix_job(account_key: str, job_id: str) -> StreamingResponse:
+    job = job_manager.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail='Job not found')
+    return _job_event_stream(job)
+
+
+@app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/secHostCoverageMatrix/summary/jobs')
+def start_sec_host_coverage_matrix_summary_job(
+    account_key: str,
+    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    context: str | None = Query(None),
+) -> dict[str, object]:
+    job = job_manager.create()
+    job_manager.run_in_background(
+        job, lambda active_job: get_account_sec_host_coverage_matrix_summary(account_key, data, active_job, context)
+    )
+    return {'jobId': job.job_id}
+
+
+@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/secHostCoverageMatrix/summary/jobs/{{job_id}}/events')
+def stream_sec_host_coverage_matrix_summary_job(account_key: str, job_id: str) -> StreamingResponse:
+    job = job_manager.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail='Job not found')
+    return _job_event_stream(job)
+
+
+@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/secHostCoverageMatrix/summary')
+def sec_host_coverage_matrix_summary_json(
+    account_key: str,
+    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    context: str | None = Query(None),
+    jsonOut: bool = Query(True),
+) -> dict[str, object]:
+    """Synchronous summary endpoint (no job/SSE wrapper) for other components to consume directly."""
+    try:
+        return get_account_sec_host_coverage_matrix_summary(account_key, data, None, context)
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error))
+
+
+@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/secHostCoverageMatrix/scoreCard')
+def sec_host_coverage_matrix_scorecard_json(
+    account_key: str,
+    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    context: str | None = Query(None),
+    jsonOut: bool = Query(True),
+) -> dict[str, object]:
+    """Synchronous scoreCard endpoint: configName/count/attackGroupAlert/attackGroupDeny JSON, no job/SSE wrapper."""
+    try:
+        return get_account_sec_host_coverage_matrix_scorecard(account_key, data, None, context)
     except Exception as error:
         raise HTTPException(status_code=500, detail=str(error))
 

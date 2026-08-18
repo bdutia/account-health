@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { DashboardLayout } from '../components/DashboardLayout'
+import { HealthWidgetLink } from '../components/HealthWidgetLink'
 import { MetricTiles } from '../components/MetricTiles'
 import { toneDotStyles, toneTextStyles } from '../components/tone'
 import { fetchAccountDashboardData, fetchAccountHostnameCoverage } from '../services/googleData'
@@ -134,114 +135,155 @@ export function AccountDetailPage() {
             ) : null}
           </div>
 
-          <Link
-            className="mb-4 inline-block text-sm font-semibold text-sky-700 underline"
-            to={`/account/${accountId}/hostname-cname-coverage`}
-          >
-            Run Hostname &amp; CNAME Coverage Scan →
-          </Link>
-          <Link
-            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
-            to={`/account/${accountId}/hostmatrix/cname`}
-          >
-            View Hostname CNAME Matrix →
-          </Link>
-          <Link
-            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
-            to={`/account/${accountId}/hostmatrix/cname/summary`}
-          >
-            View Hostname CNAME Matrix Summary →
-          </Link>
-          <Link
-            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
-            to={`/account/${accountId}/featureMatrix`}
-          >
-            View Feature Matrix →
-          </Link>
-          <Link
-            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
-            to={`/account/${accountId}/featureMatrix/summary`}
-          >
-            View Feature Matrix Summary →
-          </Link>
-          <Link
-            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
-            to={`/account/${accountId}/featureMatrix/scoreCard`}
-          >
-            View Feature Matrix ScoreCard →
-          </Link>
-          <Link
-            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
-            to={`/account/${accountId}/secHostCoverageMatrix`}
-          >
-            View Security Host Coverage Matrix →
-          </Link>
-          <Link
-            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
-            to={`/account/${accountId}/secHostCoverageMatrix/summary`}
-          >
-            View Security Host Coverage Matrix Summary →
-          </Link>
-          <Link
-            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
-            to={`/account/${accountId}/secHostCoverageMatrix/scoreCard`}
-          >
-            View Security Host Coverage Matrix ScoreCard →
-          </Link>
-          <Link
-            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
-            to={`/account/${accountId}/trafficMatrix`}
-          >
-            View Traffic Matrix →
-          </Link>
-          <Link
-            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
-            to={`/account/${accountId}/trafficMatrix/summary`}
-          >
-            View Traffic Matrix Summary →
-          </Link>
-          <Link
-            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
-            to={`/account/${accountId}/trafficMatrix/scoreCard`}
-          >
-            View Traffic Matrix ScoreCard →
-          </Link>
-          <Link
-            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
-            to={`/account/${accountId}/perfMatrix`}
-          >
-            View Performance Matrix →
-          </Link>
-          <Link
-            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
-            to={`/account/${accountId}/perfMatrix/summary`}
-          >
-            View Performance Matrix Summary →
-          </Link>
-          <Link
-            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
-            to={`/account/${accountId}/perfMatrix/scoreCard`}
-          >
-            View Performance Matrix ScoreCard →
-          </Link>
-          <Link
-            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
-            to={`/account/${accountId}/perfMatrixTopN`}
-          >
-            View Performance Matrix (Top 10) →
-          </Link>
-          <Link
-            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
-            to={`/account/${accountId}/perfMatrixTopN/summary`}
-          >
-            View Performance Matrix (Top 10) Summary →
-          </Link>
-          <Link
-            className="mb-4 ml-4 inline-block text-sm font-semibold text-sky-700 underline"
-            to={`/account/${accountId}/perfMatrixTopN/scoreCard`}
-          >
-            View Performance Matrix (Top 10) ScoreCard →
-          </Link>
+          <div className="mb-6 space-y-6">
+            <div>
+              <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-sky-700">
+                Hostname &amp; CNAME Pulse Monitoring
+              </h3>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                <HealthWidgetLink
+                  variant="pulseMonitor"
+                  to={`/account/${accountId}/hostname-cname-coverage`}
+                  title="Hostname Health"
+                  description="Run Hostname & CNAME Coverage Scan"
+                />
+                <HealthWidgetLink
+                  variant="pulseMonitor"
+                  to={`/account/${accountId}/hostmatrix/cname`}
+                  title="Hostname Diagnostic Score Card"
+                  description="View Hostname CNAME Matrix"
+                />
+                <HealthWidgetLink
+                  variant="pulseMonitor"
+                  to={`/account/${accountId}/hostmatrix/cname/summary`}
+                  title="Hostname Summary"
+                  description="View Hostname CNAME Matrix Summary"
+                />
+              </div>
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-rose-700">
+                Feature Matrix Heart Rate Diagnosis
+              </h3>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                <HealthWidgetLink
+                  variant="heartbeat"
+                  to={`/account/${accountId}/featureMatrix`}
+                  title="Feature Matrix"
+                  description="View Feature Matrix"
+                />
+                <HealthWidgetLink
+                  variant="heartbeat"
+                  to={`/account/${accountId}/featureMatrix/summary`}
+                  title="Feature Summary"
+                  description="View Feature Matrix Summary"
+                />
+                <HealthWidgetLink
+                  variant="heartbeat"
+                  to={`/account/${accountId}/featureMatrix/scoreCard`}
+                  title="Feature Score Card"
+                  description="View Feature Matrix ScoreCard"
+                />
+              </div>
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-indigo-700">
+                Traffic Matrix DNA Scan
+              </h3>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                <HealthWidgetLink
+                  variant="dnaHelix"
+                  to={`/account/${accountId}/trafficMatrix`}
+                  title="Traffic Matrix"
+                  description="View Traffic Matrix"
+                />
+                <HealthWidgetLink
+                  variant="dnaHelix"
+                  to={`/account/${accountId}/trafficMatrix/summary`}
+                  title="Traffic Matrix Summary"
+                  description="View Traffic Matrix Summary"
+                />
+                <HealthWidgetLink
+                  variant="dnaHelix"
+                  to={`/account/${accountId}/trafficMatrix/scoreCard`}
+                  title="Traffic Matrix Score Card"
+                  description="View Traffic Matrix ScoreCard"
+                />
+              </div>
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-teal-700">
+                Performance Matrix Stethoscope Check
+              </h3>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                <HealthWidgetLink
+                  variant="stethoscope"
+                  to={`/account/${accountId}/perfMatrix`}
+                  title="Performance Matrix"
+                  description="View Performance Matrix"
+                />
+                <HealthWidgetLink
+                  variant="stethoscope"
+                  to={`/account/${accountId}/perfMatrix/summary`}
+                  title="Performance Matrix Summary"
+                  description="View Performance Matrix Summary"
+                />
+                <HealthWidgetLink
+                  variant="stethoscope"
+                  to={`/account/${accountId}/perfMatrix/scoreCard`}
+                  title="Performance Matrix Score Card"
+                  description="View Performance Matrix ScoreCard"
+                />
+                <HealthWidgetLink
+                  variant="stethoscope"
+                  to={`/account/${accountId}/perfMatrixTopN`}
+                  title="Performance Matrix (Top 10)"
+                  description="View Performance Matrix (Top 10)"
+                />
+                <HealthWidgetLink
+                  variant="stethoscope"
+                  to={`/account/${accountId}/perfMatrixTopN/summary`}
+                  title="Performance Matrix (Top 10) Summary"
+                  description="View Performance Matrix (Top 10) Summary"
+                />
+                <HealthWidgetLink
+                  variant="stethoscope"
+                  to={`/account/${accountId}/perfMatrixTopN/scoreCard`}
+                  title="Performance Matrix (Top 10) Score Card"
+                  description="View Performance Matrix (Top 10) ScoreCard"
+                />
+              </div>
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-amber-700">
+                Security Host Coverage Pulse
+              </h3>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                <HealthWidgetLink
+                  variant="securityPulse"
+                  to={`/account/${accountId}/secHostCoverageMatrix`}
+                  title="Security Host Coverage Matrix"
+                  description="View Security Host Coverage Matrix"
+                />
+                <HealthWidgetLink
+                  variant="securityPulse"
+                  to={`/account/${accountId}/secHostCoverageMatrix/summary`}
+                  title="Security Host Coverage Summary"
+                  description="View Security Host Coverage Matrix Summary"
+                />
+                <HealthWidgetLink
+                  variant="securityPulse"
+                  to={`/account/${accountId}/secHostCoverageMatrix/scoreCard`}
+                  title="Security Host Coverage Score Card"
+                  description="View Security Host Coverage Matrix ScoreCard"
+                />
+              </div>
+            </div>
+          </div>
 
           {!hostnameCoverage ? (
             <p className="text-sm text-slate-600">

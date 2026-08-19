@@ -235,6 +235,88 @@ export interface FeatureMatrixScoreCardResult {
   totals: FeatureMatrixScoreCardTotals
 }
 
+export interface SecHostCoverageMatrixTotals {
+  rows: number
+  hostnames: number
+  configNames: number
+  covered: number
+  notCovered: number
+}
+
+export interface SecHostCoverageMatrixResult {
+  accountKey: string
+  accountName: string
+  accountId: string
+  dataMode: CsvDataMode
+  columns: string[]
+  baseColumns: string[]
+  metricColumns: string[]
+  hostnames: string[]
+  configNames: string[]
+  rows: Array<Record<string, string>>
+  totals: SecHostCoverageMatrixTotals
+}
+
+export type SecHostCoverageMatrixJobProgressEvent =
+  | { type: 'progress'; message: string; level: JobProgressLevel; percent: number; timestamp: number }
+  | { type: 'completed'; percent: number; result: SecHostCoverageMatrixResult; timestamp: number }
+  | { type: 'failed'; message: string; timestamp: number }
+
+export interface SecHostCoverageMatrixSummaryTotals {
+  rows: number
+  hostnames: number
+  covered: number
+  notCovered: number
+}
+
+export interface SecHostCoverageMatrixBreakdownItem {
+  value: string
+  count: number
+}
+
+export interface SecHostCoverageMatrixSummaryResult {
+  accountKey: string
+  accountName: string
+  accountId: string
+  dataMode: CsvDataMode
+  columns: string[]
+  metricColumns: string[]
+  totals: SecHostCoverageMatrixSummaryTotals
+  breakdowns: Record<string, SecHostCoverageMatrixBreakdownItem[]>
+  metricTotals: Record<string, number>
+}
+
+export type SecHostCoverageMatrixSummaryJobProgressEvent =
+  | { type: 'progress'; message: string; level: JobProgressLevel; percent: number; timestamp: number }
+  | { type: 'completed'; percent: number; result: SecHostCoverageMatrixSummaryResult; timestamp: number }
+  | { type: 'failed'; message: string; timestamp: number }
+
+export interface SecHostCoverageMatrixScoreCardEntry {
+  hostname: string
+  status: string
+}
+
+export interface SecHostCoverageMatrixScoreCardGroup {
+  configName: string
+  count: number
+  attackGroupAlert: SecHostCoverageMatrixScoreCardEntry[]
+  attackGroupDeny: SecHostCoverageMatrixScoreCardEntry[]
+}
+
+export interface SecHostCoverageMatrixScoreCardTotals {
+  hostnames: number
+  configNames: number
+}
+
+export interface SecHostCoverageMatrixScoreCardResult {
+  accountKey: string
+  accountName: string
+  accountId: string
+  dataMode: CsvDataMode
+  secHostCoverageMatrix: SecHostCoverageMatrixScoreCardGroup[]
+  totals: SecHostCoverageMatrixScoreCardTotals
+}
+
 export interface TrafficMatrixTotals {
   rows: number
   hostnames: number

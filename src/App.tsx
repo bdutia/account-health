@@ -12,6 +12,9 @@ import { PerfMatrixSummaryPage } from './pages/PerfMatrixSummaryPage'
 import { PerfMatrixTopNPage } from './pages/PerfMatrixTopNPage'
 import { PerfMatrixTopNScoreCardPage } from './pages/PerfMatrixTopNScoreCardPage'
 import { PerfMatrixTopNSummaryPage } from './pages/PerfMatrixTopNSummaryPage'
+import { SecHostCoverageMatrixPage } from './pages/SecHostCoverageMatrixPage'
+import { SecHostCoverageMatrixScoreCardPage } from './pages/SecHostCoverageMatrixScoreCardPage'
+import { SecHostCoverageMatrixSummaryPage } from './pages/SecHostCoverageMatrixSummaryPage'
 import { SummaryPage } from './pages/SummaryPage'
 import { TrafficMatrixPage } from './pages/TrafficMatrixPage'
 import { TrafficMatrixScoreCardPage } from './pages/TrafficMatrixScoreCardPage'
@@ -33,6 +36,10 @@ function App() {
         <Route path="/account/:accountId/featureMatrix/scoreCard" element={<FeatureMatrixScoreCardPage />} />
         <Route path="/account/:accountId/featureMatrix/:propIdOrFeature" element={<FeatureMatrixPage />} />
         <Route path="/account/:accountId/featureMatrix" element={<FeatureMatrixPage />} />
+        <Route path="/account/:accountId/secHostCoverageMatrix/summary" element={<SecHostCoverageMatrixSummaryPage />} />
+        <Route path="/account/:accountId/secHostCoverageMatrix/scoreCard" element={<SecHostCoverageMatrixScoreCardPage />} />
+        <Route path="/account/:accountId/secHostCoverageMatrix/:configOrFeature" element={<SecHostCoverageMatrixPage />} />
+        <Route path="/account/:accountId/secHostCoverageMatrix" element={<SecHostCoverageMatrixPage />} />
         <Route path="/account/:accountId/trafficMatrix/summary" element={<TrafficMatrixSummaryPage />} />
         <Route path="/account/:accountId/trafficMatrix/scoreCard" element={<TrafficMatrixScoreCardPage />} />
         <Route path="/account/:accountId/trafficMatrix/:hostname" element={<TrafficMatrixPage />} />

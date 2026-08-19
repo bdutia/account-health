@@ -17,4 +17,17 @@ COPY backend ./backend
 COPY --from=frontend-build /app/dist ./dist
 EXPOSE 4000
 ENV PORT=4000
+ENV APP_BASE_PATH=
+ENV SERVER_DATA_MODE=mock
+# Provide secrets and integration settings at runtime, for example via
+# `docker run --env-file .env.server ...` or your deployment platform's env config:
+# GOOGLE_SHEETS_SPREADSHEET_ID
+# GOOGLE_SERVICE_ACCOUNT_EMAIL
+# GOOGLE_PRIVATE_KEY
+# CRUX_API_KEY
+# NS_HOSTNAME
+# NS_KEYNAME
+# NS_KEY
+# NS_CP_CODE
+# NS_BASE_PATH
 CMD ["sh", "-c", "python -m uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-4000}"]

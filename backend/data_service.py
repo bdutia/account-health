@@ -814,14 +814,16 @@ def download_csv_from_netstorage(remote_path: str, local_path: Path, job: Job | 
     headers = getattr(result, "headers", None)
 
     body_text: str | None = None
-    text_attr = getattr(result, "text", None)
-    if not callable(text_attr):
-        try:
-            body_text = text_attr
-        except Exception:
-            # The SDK streamed the response body directly to disk, so accessing
-            # .text again raises (e.g. requests.exceptions.StreamConsumedError).
-            body_text = "<response body already consumed by streaming download>"
+    try:
+        text_attr = result.text
+    except Exception:
+        # The SDK streamed the response body directly to disk, so accessing
+        # .text again can raise (e.g. requests.exceptions.StreamConsumedError).
+        text_attr = None
+    if isinstance(text_attr, str):
+        body_text = text_attr
+    elif text_attr is not None:
+        body_text = str(text_attr)
 
     if job:
         job.log(

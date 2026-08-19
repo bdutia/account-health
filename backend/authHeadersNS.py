@@ -1,19 +1,26 @@
 import os
-import sys
-import importlib
+from pathlib import Path
 
-from akamai.netstorage import Netstorage, NetstorageError
+from akamai.netstorage import Netstorage
+from dotenv import load_dotenv
 
-# 1. Initialize your NetStorage Client Credentials
-NS_HOSTNAME = "your_ns_hostname"
-NS_KEYNAME = "uploadaccoutname"
-# storage group: xxxx
-NS_CPCODE = "cpcode"
-NS_KEY = "xxxxxx"
+load_dotenv(Path(__file__).resolve().parents[1] / ".env.server")
 
-# The path on Akamai NetStorage MUST start with your CP Code
-CP_CODE = "2052217" 
-REMOTE_DIR = f"/{CP_CODE}/staticSiteContent/brandnew123"
+
+def require_env(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if not value:
+        raise ValueError(f"Missing required environment variable: {name}")
+    return value
+
+
+NS_HOSTNAME = require_env("NS_HOSTNAME")
+NS_KEYNAME = require_env("NS_KEYNAME")
+NS_KEY = require_env("NS_KEY")
+CP_CODE = require_env("NS_CP_CODE")
+NS_BASE_PATH = os.getenv("NS_BASE_PATH", "").strip().strip("/")
+
+REMOTE_DIR = "/" + "/".join(part for part in [CP_CODE, NS_BASE_PATH] if part)
 REMOTE_FILE_PATH = f"{REMOTE_DIR}/sample_data.txt"
 
 LOCAL_UPLOAD_SOURCE = "local_file.txt"
@@ -29,13 +36,8 @@ def setup_dummy_file():
 def main():
     setup_dummy_file()
 
-   # Netstorage = load_netstorage_class()
-    ns = Netstorage(NS_HOSTNAME, NS_KEYNAME, NS_KEY, ssl=False) # ssl is optional (default: False)
-    
-    # 2. Instantiate the NetStorage Client
     print("Connecting to Akamai NetStorage Service...")
-    #ns = Netstorage(NS_KEYNAME, NS_KEY, NS_HOSTNAME)
-    ns = Netstorage(NS_HOSTNAME,NS_KEYNAME, NS_KEY)
+    ns = Netstorage(NS_HOSTNAME, NS_KEYNAME, NS_KEY)
     
     # 3. Create the remote directory if needed (optional)
     print(f"Ensuring remote directory exists: {REMOTE_DIR}")

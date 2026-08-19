@@ -7,4 +7,9 @@ const basePath = process.env.VITE_APP_BASE_PATH || '/'
 export default defineConfig({
   base: basePath,
   plugins: [react()],
+  server: {
+    proxy: {
+      '/api': 'http://localhost:4000',
+    },
+  },
 })

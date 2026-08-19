@@ -46,6 +46,8 @@ To use the backend API (recommended), copy `.env.example` to `.env` and set:
 
 Then copy `.env.server.example` to `.env.server` and configure backend credentials.
 
+Backend runtime settings are read by the container at startup from environment variables. For repo-local testing, keep them in `.env.server`; for GSAP or another deployment platform, the same variable names can be injected by the runtime team.
+
 For Akamai hostname coverage PoC, also set in `.env.server`:
 
 - `EDGE_RC_SECTION` (for example `default`)
@@ -53,6 +55,18 @@ For Akamai hostname coverage PoC, also set in `.env.server`:
 - `AKAMAI_ACCOUNT_MAP_PATH` (defaults to `backend/account_id_map.json`)
 
 Create `backend/account_id_map.json` from `backend/account_id_map.example.json` and map your account key to Akamai account ID.
+
+For NetStorage-backed CSV access, also set in `.env.server`:
+
+- `NS_HOSTNAME`
+- `NS_KEYNAME`
+- `NS_KEY`
+- `NS_CP_CODE`
+- `NS_BASE_PATH`
+
+For live Core Web Vitals lookups used by the perf matrix endpoints, also set in `.env.server`:
+
+- `CRUX_API_KEY`
 
 For prefixed cloud hosting (example `/account-health`), set:
 
@@ -84,17 +98,51 @@ npm run preview
 
 ## Docker (Cloud Deploy)
 
-Build and run locally with path prefix:
+Build the image:
 
-```bash - lessons learnt: api string concat issue: always use: /account-health (no trailing slash, will be removed regarldess::workign version in docker local build: 
-*****************************************
+```bash
 docker build --build-arg VITE_APP_BASE_PATH=/account-health -t account-health:latest .
-docker run --rm -p 4000:4000 --env-file .env.server -e APP_BASE_PATH=/account-health account-health:latest
-*************************************
+```
 
-docker build --build-arg VITE_APP_BASE_PATH=/account-health -t account-health:latest .
+Run it locally with backend env vars loaded from `.env.server`:
+
+```bash
 docker run --rm -p 4000:4000 --env-file .env.server -e APP_BASE_PATH=/account-health account-health:latest
 ```
+
+Example: Google-backed runtime mode:
+
+```bash
+docker run --rm -p 4000:4000 \
+	--env-file .env.server \
+	-e APP_BASE_PATH=/account-health \
+	-e SERVER_DATA_MODE=google \
+	account-health:latest
+```
+
+Example: NetStorage-backed CSV runtime mode:
+
+```bash
+docker run --rm -p 4000:4000 \
+	--env-file .env.server \
+	-e APP_BASE_PATH=/account-health \
+	-e SERVER_DATA_MODE=csv_data_remote \
+	account-health:latest
+```
+
+The image expects secrets and integration settings at runtime, not at build time. Common runtime variables are:
+
+- `APP_BASE_PATH`
+- `SERVER_DATA_MODE`
+- `GOOGLE_SHEETS_SPREADSHEET_ID`
+- `GOOGLE_SERVICE_ACCOUNT_EMAIL`
+- `GOOGLE_PRIVATE_KEY`
+- `CRUX_API_KEY`
+- `NS_HOSTNAME`
+- `NS_KEYNAME`
+- `NS_KEY`
+- `NS_CP_CODE`
+- `NS_BASE_PATH`
 
 Then open:
 

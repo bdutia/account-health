@@ -5,11 +5,11 @@ import importlib
 from akamai.netstorage import Netstorage, NetstorageError
 
 # 1. Initialize your NetStorage Client Credentials
-NS_HOSTNAME = "mysitelab-nsu.akamaihd.net"
-#NS_KEYNAME = "mySiteLabUpload" -uploadAccount.
-# storage group: staticSiteContent
-NS_KEYNAME = "mySiteLabUpload"
-NS_KEY = "I6x81KcAoSblBOWLiZRknTKCrUGicZxuLaKhjQNrRvSRNP"
+NS_HOSTNAME = "your_ns_hostname"
+NS_KEYNAME = "uploadaccoutname"
+# storage group: xxxx
+NS_CPCODE = "cpcode"
+NS_KEY = "xxxxxx"
 
 # The path on Akamai NetStorage MUST start with your CP Code
 CP_CODE = "2052217" 

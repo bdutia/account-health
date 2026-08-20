@@ -1,6 +1,10 @@
 import csv
+from collections import deque
+from functools import wraps
+import importlib
 import os
 import json
+from threading import Lock
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -9,12 +13,38 @@ from urllib.parse import urljoin
 
 import requests
 from akamai.edgegrid import EdgeGridAuth, EdgeRc
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from ratelimit import limits, sleep_and_retry
 
 from backend.job_manager import Job
 from backend.mock_data import account_details, accounts, summary_metrics, summary_panels
+
+
+def limits(calls: int, period: float):
+    """Rate-limit calls without requiring the optional ``ratelimit`` package."""
+    timestamps: deque[float] = deque()
+    lock = Lock()
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            while True:
+                with lock:
+                    now = time.monotonic()
+                    while timestamps and now - timestamps[0] >= period:
+                        timestamps.popleft()
+                    if len(timestamps) < calls:
+                        timestamps.append(now)
+                        return func(*args, **kwargs)
+                    wait_time = period - (now - timestamps[0])
+                time.sleep(max(wait_time, 0))
+
+        return wrapper
+
+    return decorator
+
+
+def sleep_and_retry(func):
+    """Compatibility decorator; ``limits`` performs waiting before retries."""
+    return func
 
 
 def get_akamai_config() -> dict[str, str]:
@@ -400,6 +430,8 @@ def fetch_hostnames_stage(
             property_name = prop.get("propertyName", property_id)
             completed += 1
             percent = 10 + int(25 * completed / max(total, 1))
+            if not property_id:
+                continue
             try:
                 results[property_id] = future.result()
                 job.log(f"[Hostnames] '{property_name}' done ({completed}/{total})", level="success", percent=percent)
@@ -457,6 +489,8 @@ def fetch_activations_stage(
             property_name = prop.get("propertyName", property_id)
             completed += 1
             percent = 35 + int(20 * completed / max(total, 1))
+            if not property_id:
+                continue
             try:
                 results[property_id] = future.result()
                 job.log(f"[Activations] '{property_name}' done ({completed}/{total})", level="success", percent=percent)
@@ -509,7 +543,7 @@ def fetch_features_stage(
         }
         for future in as_completed(futures):
             prop = futures[future]
-            property_id = prop.get("propertyId")
+            property_id = prop.get("propertyId") or ""
             property_name = prop.get("propertyName", property_id)
             completed += 1
             percent = 55 + int(20 * completed / max(total, 1))
@@ -583,11 +617,11 @@ def build_feature_matrix(session: requests.Session, base_url: str, job: Job) -> 
     for contract_id, group_id, prop in property_tasks:
         property_id = prop.get("propertyId")
         version = prop.get("latestVersion") or prop.get("productionVersion") or prop.get("stagingVersion")
-        hostnames = hostnames_by_property.get(property_id) or [""]
-        activation_summary = activations_by_property.get(property_id) or {}
+        hostnames = (hostnames_by_property.get(property_id) if property_id else None) or [""]
+        activation_summary = (activations_by_property.get(property_id) if property_id else None) or {}
         staging = activation_summary.get("STAGING", {})
         production = activation_summary.get("PRODUCTION", {})
-        features = features_by_property.get(property_id) or {"behaviors": [], "origins": []}
+        features = (features_by_property.get(property_id) if property_id else None) or {"behaviors": [], "origins": []}
 
         for hostname in hostnames:
             rows.append(
@@ -815,7 +849,7 @@ def download_csv_from_netstorage(remote_path: str, local_path: Path, job: Job | 
 
     body_text: str | None = None
     try:
-        text_attr = result.text
+        text_attr = getattr(result, "text", None) if result is not None else None
     except Exception:
         # The SDK streamed the response body directly to disk, so accessing
         # .text again can raise (e.g. requests.exceptions.StreamConsumedError).
@@ -2212,6 +2246,8 @@ def get_account_perf_matrix_topn_scorecard(
         },
         "hostnames": hostname_entries,
     }
+def get_google_config() -> dict[str, str | None]:
+    """Return Google Sheets configuration from environment variables."""
     return {
         "spreadsheet_id": os.getenv("GOOGLE_SHEETS_SPREADSHEET_ID"),
         "summary_metrics_range": os.getenv("GOOGLE_SHEETS_SUMMARY_METRICS_RANGE") or "SummaryMetrics!A:E",
@@ -2258,6 +2294,13 @@ def to_map(values: list[list[str]]) -> list[dict[str, str]]:
 
 
 def get_google_clients() -> tuple[Any, Any] | tuple[None, None]:
+    """Create Google API clients when the optional Google dependencies are installed."""
+    try:
+        service_account = importlib.import_module("google.oauth2.service_account")
+        build = importlib.import_module("googleapiclient.discovery").build
+    except ImportError:
+        return None, None
+
     cfg = get_google_config()
     client_email = os.getenv("GOOGLE_SERVICE_ACCOUNT_EMAIL")
     private_key = parse_private_key(os.getenv("GOOGLE_PRIVATE_KEY"))

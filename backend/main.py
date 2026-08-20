@@ -2,11 +2,10 @@ import json
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, HTTPException, Query  # type: ignore[import-not-found]
+from fastapi.middleware.cors import CORSMiddleware  # type: ignore[import-not-found]
+from fastapi.responses import FileResponse, StreamingResponse  # type: ignore[import-not-found]
+from fastapi.staticfiles import StaticFiles  # type: ignore[import-not-found]
 
 from backend.data_service import (
     get_account_hostname_coverage,
@@ -33,6 +32,22 @@ from backend.data_service import (
     get_summary_dashboard_debug,
 )
 from backend.job_manager import Job, job_manager
+
+
+def load_dotenv(path: str) -> None:
+    """Load simple KEY=VALUE entries without requiring python-dotenv."""
+    env_file = Path(path)
+    if not env_file.is_file():
+        return
+    for line in env_file.read_text(encoding='utf-8').splitlines():
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        key, value = line.split('=', 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        os.environ.setdefault(key, value)
+
 
 load_dotenv('.env.server')
 

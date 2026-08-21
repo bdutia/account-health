@@ -283,6 +283,32 @@ export function AccountDetailPage() {
                 />
               </div>
             </div>
+
+            <div>
+              <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-red-700">
+                WSA Alert Matrix — Security Alert Scan
+              </h3>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                <HealthWidgetLink
+                  variant="securityAlert"
+                  to={`/account/${accountId}/wsaAlertMatrix`}
+                  title="WSA Alert Matrix"
+                  description="View WSA Alert Config &amp; Feature Table"
+                />
+                <HealthWidgetLink
+                  variant="securityAlert"
+                  to={`/account/${accountId}/wsaAlertMatrix/summary`}
+                  title="WSA Alert Summary"
+                  description="View WSA Alert Matrix Summary"
+                />
+                <HealthWidgetLink
+                  variant="securityAlert"
+                  to={`/account/${accountId}/wsaAlertMatrix/scoreCard`}
+                  title="WSA Alert Score Card"
+                  description="View WSA Alert Matrix ScoreCard"
+                />
+              </div>
+            </div>
           </div>
 
           {!hostnameCoverage ? (

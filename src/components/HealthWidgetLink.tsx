@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 
-export type HealthAnimationVariant = 'pulseMonitor' | 'heartbeat' | 'dnaHelix' | 'stethoscope' | 'securityPulse'
+export type HealthAnimationVariant = 'pulseMonitor' | 'heartbeat' | 'dnaHelix' | 'stethoscope' | 'securityPulse' | 'securityAlert'
 
 interface HealthWidgetLinkProps {
   to: string
@@ -40,9 +40,19 @@ const ACCENTS: Record<HealthAnimationVariant, { border: string; chipBg: string; 
     chipBorder: 'border-amber-200',
     text: 'text-amber-700',
   },
+  securityAlert: {
+    border: 'hover:border-red-300',
+    chipBg: 'bg-red-50',
+    chipBorder: 'border-red-200',
+    text: 'text-red-700',
+  },
 }
 
 function AnimationChip({ variant }: { variant: HealthAnimationVariant }) {
+  if (variant === 'securityAlert') {
+    return <SecurityAlertChip />
+  }
+
   if (variant === 'pulseMonitor') {
     return (
       <svg viewBox="0 0 64 64" className="h-8 w-8 text-sky-600" fill="none">
@@ -106,6 +116,22 @@ function AnimationChip({ variant }: { variant: HealthAnimationVariant }) {
       <span className="absolute h-8 w-8 rounded-full border-2 border-amber-400 animate-health-security-ring" />
       <svg viewBox="0 0 24 24" className="relative h-6 w-6 text-amber-600 animate-health-security-shield" fill="currentColor">
         <path d="M12 2 4 5v6c0 5 3.4 9 8 11 4.6-2 8-6 8-11V5l-8-3z" />
+      </svg>
+    </div>
+  )
+}
+
+function SecurityAlertChip() {
+  return (
+    <div className="relative flex h-8 w-8 items-center justify-center">
+      <span className="absolute h-8 w-8 rounded-full border-2 border-red-400 animate-health-alert-ring" />
+      <svg viewBox="0 0 24 24" className="relative h-6 w-6 text-red-600 animate-health-alert-shield" fill="currentColor">
+        {/* shield body */}
+        <path d="M12 2 4 5v6c0 5 3.4 9 8 11 4.6-2 8-6 8-11V5l-8-3z" />
+        {/* exclamation bar */}
+        <rect x="11.1" y="7" width="1.8" height="5.2" rx="0.9" fill="white" className="animate-health-alert-exclaim" />
+        {/* exclamation dot */}
+        <circle cx="12" cy="15.4" r="1.1" fill="white" className="animate-health-alert-exclaim" />
       </svg>
     </div>
   )

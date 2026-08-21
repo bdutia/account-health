@@ -552,6 +552,82 @@ export interface PerfMatrixTopNScoreCardResult {
   hostnames: PerfMatrixScoreCardHostnameEntry[]
 }
 
+// --- wsaAlertMatrix ---
+
+export interface WsaAlertMatrixTotals {
+  rows: number
+  configs: number
+  features: number
+}
+
+export interface WsaAlertMatrixResult {
+  accountKey: string
+  accountName: string
+  accountId: string
+  dataMode: CsvDataMode
+  columns: string[]
+  baseColumns: string[]
+  featureColumns: string[]
+  configs: string[]
+  rows: Array<Record<string, string>>
+  totals: WsaAlertMatrixTotals
+}
+
+export type WsaAlertMatrixJobProgressEvent =
+  | { type: 'progress'; message: string; level: JobProgressLevel; percent: number; timestamp: number }
+  | { type: 'completed'; percent: number; result: WsaAlertMatrixResult; timestamp: number }
+  | { type: 'failed'; message: string; timestamp: number }
+
+export interface WsaAlertMatrixSummaryTotals {
+  rows: number
+  configs: number
+  features: number
+  enabled: number
+  disabled: number
+}
+
+export interface WsaAlertMatrixBreakdownItem {
+  value: string
+  count: number
+}
+
+export interface WsaAlertMatrixSummaryResult {
+  accountKey: string
+  accountName: string
+  accountId: string
+  dataMode: CsvDataMode
+  columns: string[]
+  baseColumns: string[]
+  featureColumns: string[]
+  totals: WsaAlertMatrixSummaryTotals
+  breakdowns: Record<string, WsaAlertMatrixBreakdownItem[]>
+}
+
+export type WsaAlertMatrixSummaryJobProgressEvent =
+  | { type: 'progress'; message: string; level: JobProgressLevel; percent: number; timestamp: number }
+  | { type: 'completed'; percent: number; result: WsaAlertMatrixSummaryResult; timestamp: number }
+  | { type: 'failed'; message: string; timestamp: number }
+
+export interface WsaAlertMatrixScoreCardEntry {
+  configName: string
+  status: string
+}
+
+export interface WsaAlertMatrixScoreCardFeature {
+  featureName: string
+  count: number
+  configs: WsaAlertMatrixScoreCardEntry[]
+}
+
+export interface WsaAlertMatrixScoreCardResult {
+  accountKey: string
+  accountName: string
+  accountId: string
+  dataMode: CsvDataMode
+  wsaAlertMatrix: WsaAlertMatrixScoreCardFeature[]
+  totals: { configs: number; features: number }
+}
+
 export interface AccountDetail {
   accountId: string
   name: string

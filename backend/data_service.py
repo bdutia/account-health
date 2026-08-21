@@ -2225,6 +2225,180 @@ def get_account_perf_matrix_topn_scorecard(
     }
 
 
+WSA_ALERT_RELATIVE_PATH = Path("REPORTS") / "CSVDATA" / "wsa-alert.csv"
+
+# Identity columns in wsa-alert.csv; every other column is a feature/alert setting.
+WSA_ALERT_BASE_COLUMNS = [
+    "configName",
+    "policyId",
+    "notificationNames",
+    "priority",
+    "managedBy",
+    "threshold",
+]
+WSA_ALERT_BASE_COLUMN_SET = set(WSA_ALERT_BASE_COLUMNS)
+
+
+def get_wsa_alert_feature_columns(columns: list[str]) -> list[str]:
+    """Every wsa-alert.csv column that isn't a base identity attribute is a feature/alert column."""
+    return [column for column in columns if column not in WSA_ALERT_BASE_COLUMN_SET]
+
+
+def get_account_wsa_alert_matrix(
+    account_key: str, data_mode: str, job: Job, context: str | None = None
+) -> dict[str, Any]:
+    """Build the WSA Alert Matrix table for an account from wsa-alert.csv."""
+    job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    job.log(f"Resolving wsa-alert.csv location ({data_mode})...", percent=8)
+    csv_path = resolve_report_csv_path(account_key, data_mode, WSA_ALERT_RELATIVE_PATH, job, context)
+
+    job.log(f"Reading {csv_path.name}...", percent=60)
+    columns, rows = read_csv_as_json(csv_path)
+    feature_columns = get_wsa_alert_feature_columns(columns)
+    configs = sorted({row.get("configName", "") for row in rows if row.get("configName")})
+
+    job.log("WSA Alert matrix ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "columns": columns,
+        "baseColumns": [column for column in WSA_ALERT_BASE_COLUMNS if column in columns],
+        "featureColumns": feature_columns,
+        "configs": configs,
+        "rows": rows,
+        "totals": {"rows": len(rows), "configs": len(configs), "features": len(feature_columns)},
+    }
+
+
+def get_account_wsa_alert_matrix_summary(
+    account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
+) -> dict[str, Any]:
+    """Summarize wsa-alert.csv: value counts for base columns + enabled/disabled for feature columns."""
+    if job:
+        job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    if job:
+        job.log(f"Resolving wsa-alert.csv location ({data_mode})...", percent=8)
+    csv_path = resolve_report_csv_path(account_key, data_mode, WSA_ALERT_RELATIVE_PATH, job, context)
+
+    if job:
+        job.log(f"Reading {csv_path.name}...", percent=60)
+    columns, rows = read_csv_as_json(csv_path)
+    feature_columns = get_wsa_alert_feature_columns(columns)
+    configs = sorted({row.get("configName", "") for row in rows if row.get("configName")})
+
+    if job:
+        job.log("Computing WSA Alert summary breakdowns...", percent=80)
+    total_rows = len(rows)
+    breakdowns: dict[str, list[dict[str, Any]]] = {}
+
+    # Base columns: value-count breakdown
+    for column in WSA_ALERT_BASE_COLUMNS:
+        if column not in columns:
+            continue
+        value_counts: dict[str, int] = {}
+        for row in rows:
+            value = (row.get(column) or "").strip() or "(blank)"
+            value_counts[value] = value_counts.get(value, 0) + 1
+        breakdowns[column] = [
+            {"value": value, "count": count}
+            for value, count in sorted(value_counts.items(), key=lambda item: item[1], reverse=True)
+        ]
+
+    # Feature columns: enabled / disabled
+    overall_enabled = 0
+    for column in feature_columns:
+        enabled_count = sum(1 for row in rows if is_feature_value_present(row.get(column)))
+        disabled_count = total_rows - enabled_count
+        overall_enabled += enabled_count
+        breakdowns[column] = [
+            {"value": "Enabled", "count": enabled_count},
+            {"value": "Disabled", "count": disabled_count},
+        ]
+    overall_total_cells = total_rows * len(feature_columns)
+    overall_disabled = overall_total_cells - overall_enabled
+
+    if job:
+        job.log("WSA Alert matrix summary ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "columns": columns,
+        "baseColumns": [column for column in WSA_ALERT_BASE_COLUMNS if column in columns],
+        "featureColumns": feature_columns,
+        "totals": {
+            "rows": total_rows,
+            "configs": len(configs),
+            "features": len(feature_columns),
+            "enabled": overall_enabled,
+            "disabled": overall_disabled,
+        },
+        "breakdowns": breakdowns,
+    }
+
+
+def get_account_wsa_alert_matrix_scorecard(
+    account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
+) -> dict[str, Any]:
+    """Build the wsaAlertMatrix scoreCard JSON: per-feature count and the configName entries that have it set."""
+    if job:
+        job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+
+    if job:
+        job.log(f"Resolving wsa-alert.csv location ({data_mode})...", percent=8)
+    csv_path = resolve_report_csv_path(account_key, data_mode, WSA_ALERT_RELATIVE_PATH, job, context)
+
+    if job:
+        job.log(f"Reading {csv_path.name}...", percent=60)
+    columns, rows = read_csv_as_json(csv_path)
+    feature_columns = get_wsa_alert_feature_columns(columns)
+    configs = sorted({row.get("configName", "") for row in rows if row.get("configName")})
+
+    if job:
+        job.log("Building WSA Alert scoreCard...", percent=80)
+    wsa_alert_matrix: list[dict[str, Any]] = []
+    for column in feature_columns:
+        config_entries = [
+            {"configName": row.get("configName", ""), "status": (row.get(column) or "").strip()}
+            for row in rows
+            if (row.get(column) or "").strip()
+        ]
+        wsa_alert_matrix.append(
+            {"featureName": column, "count": len(config_entries), "configs": config_entries}
+        )
+
+    if job:
+        job.log("WSA Alert matrix scoreCard ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": account_metadata.get("accountName", account_key),
+        "accountId": account_metadata.get("accountId", ""),
+        "dataMode": data_mode,
+        "wsaAlertMatrix": wsa_alert_matrix,
+        "totals": {"configs": len(configs), "features": len(feature_columns)},
+    }
+
+
 def parse_private_key(raw: str | None) -> str | None:
     if not raw:
         return None

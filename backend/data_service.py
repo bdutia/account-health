@@ -2225,9 +2225,9 @@ def get_account_perf_matrix_topn_scorecard(
     }
 
 
-WSA_ALERT_RELATIVE_PATH = Path("REPORTS") / "CSVDATA" / "wsa-alert.csv"
+WSA_ALERT_RELATIVE_PATH = Path("REPORTS") / "CSVDATA" / "wsa-alerts.csv"
 
-# Identity columns in wsa-alert.csv; every other column is a feature/alert setting.
+# Identity columns in wsa-alerts.csv; every other column is a feature/alert setting.
 WSA_ALERT_BASE_COLUMNS = [
     "configName",
     "policyId",
@@ -2240,21 +2240,21 @@ WSA_ALERT_BASE_COLUMN_SET = set(WSA_ALERT_BASE_COLUMNS)
 
 
 def get_wsa_alert_feature_columns(columns: list[str]) -> list[str]:
-    """Every wsa-alert.csv column that isn't a base identity attribute is a feature/alert column."""
+    """Every wsa-alerts.csv column that isn't a base identity attribute is a feature/alert column."""
     return [column for column in columns if column not in WSA_ALERT_BASE_COLUMN_SET]
 
 
 def get_account_wsa_alert_matrix(
     account_key: str, data_mode: str, job: Job, context: str | None = None
 ) -> dict[str, Any]:
-    """Build the WSA Alert Matrix table for an account from wsa-alert.csv."""
+    """Build the WSA Alert Matrix table for an account from wsa-alerts.csv."""
     job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
     mapping = load_account_id_map()
     account_metadata = mapping.get(account_key)
     if not account_metadata:
         raise ValueError(f"No mapping found for account key: {account_key}")
 
-    job.log(f"Resolving wsa-alert.csv location ({data_mode})...", percent=8)
+    job.log(f"Resolving wsa-alerts.csv location ({data_mode})...", percent=8)
     csv_path = resolve_report_csv_path(account_key, data_mode, WSA_ALERT_RELATIVE_PATH, job, context)
 
     job.log(f"Reading {csv_path.name}...", percent=60)
@@ -2281,7 +2281,7 @@ def get_account_wsa_alert_matrix(
 def get_account_wsa_alert_matrix_summary(
     account_key: str, data_mode: str, job: Job | None = None, context: str | None = None
 ) -> dict[str, Any]:
-    """Summarize wsa-alert.csv: value counts for base columns + enabled/disabled for feature columns."""
+    """Summarize wsa-alerts.csv: value counts for base columns + enabled/disabled for feature columns."""
     if job:
         job.log(f"Looking up account mapping for '{account_key}'...", percent=2)
     mapping = load_account_id_map()
@@ -2290,7 +2290,7 @@ def get_account_wsa_alert_matrix_summary(
         raise ValueError(f"No mapping found for account key: {account_key}")
 
     if job:
-        job.log(f"Resolving wsa-alert.csv location ({data_mode})...", percent=8)
+        job.log(f"Resolving wsa-alerts.csv location ({data_mode})...", percent=8)
     csv_path = resolve_report_csv_path(account_key, data_mode, WSA_ALERT_RELATIVE_PATH, job, context)
 
     if job:
@@ -2364,7 +2364,7 @@ def get_account_wsa_alert_matrix_scorecard(
         raise ValueError(f"No mapping found for account key: {account_key}")
 
     if job:
-        job.log(f"Resolving wsa-alert.csv location ({data_mode})...", percent=8)
+        job.log(f"Resolving wsa-alerts.csv location ({data_mode})...", percent=8)
     csv_path = resolve_report_csv_path(account_key, data_mode, WSA_ALERT_RELATIVE_PATH, job, context)
 
     if job:

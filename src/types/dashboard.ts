@@ -107,7 +107,8 @@ export type JobProgressEvent =
   | { type: 'completed'; percent: number; result: HostnameCnameCoverageResult; timestamp: number }
   | { type: 'failed'; message: string; timestamp: number }
 
-export type CsvDataMode = 'csv_data_local' | 'csv_data_remote'
+// Local (test) mode has been removed; the dashboard always loads fresh data from remote NetStorage.
+export type CsvDataMode = 'csv_data_remote'
 
 export interface HostnameCnameMatrixTotals {
   rows: number

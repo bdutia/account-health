@@ -5,6 +5,18 @@ import type {
   WsaAlertMatrixSummaryJobProgressEvent,
   WsaAlertMatrixSummaryResult,
 } from '../types/dashboard'
+import { runJobWithRetry } from './sseJobClient'
+
+export const WSA_ALERT_MATRIX_CSV_FILENAME = 'wsa-alerts.csv'
+
+export function getWsaAlertMatrixDownloadUrl(accountKey: string, context?: string): string {
+  const params = new URLSearchParams()
+  if (context) {
+    params.set('context', context)
+  }
+  const query = params.toString()
+  return `${API_BASE_URL}/api/dashboard/account/${accountKey}/wsaAlertMatrix/download${query ? `?${query}` : ''}`
+}
 
 const DEFAULT_API_BASE_URL = `${import.meta.env.BASE_URL}`.replace(/\/$/, '')
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE_URL
@@ -30,28 +42,18 @@ export async function startWsaAlertMatrixJob(
   return payload.jobId
 }
 
-export function subscribeToWsaAlertMatrixJob(
+export function runWsaAlertMatrixJob(
   accountKey: string,
-  jobId: string,
+  dataMode: CsvDataMode,
+  context: string | undefined,
   onEvent: (event: WsaAlertMatrixJobProgressEvent) => void,
 ): () => void {
-  const source = new EventSource(
-    `${API_BASE_URL}/api/dashboard/account/${accountKey}/wsaAlertMatrix/jobs/${jobId}/events`,
-  )
-
-  source.onmessage = (message) => {
-    const event = JSON.parse(message.data) as WsaAlertMatrixJobProgressEvent
-    onEvent(event)
-    if (event.type === 'completed' || event.type === 'failed') {
-      source.close()
-    }
-  }
-
-  source.onerror = () => {
-    source.close()
-  }
-
-  return () => source.close()
+  return runJobWithRetry<WsaAlertMatrixJobProgressEvent>({
+    startJob: () => startWsaAlertMatrixJob(accountKey, dataMode, context),
+    buildEventsUrl: (jobId) =>
+      `${API_BASE_URL}/api/dashboard/account/${accountKey}/wsaAlertMatrix/jobs/${jobId}/events`,
+    onEvent,
+  })
 }
 
 export async function startWsaAlertMatrixSummaryJob(
@@ -75,28 +77,18 @@ export async function startWsaAlertMatrixSummaryJob(
   return payload.jobId
 }
 
-export function subscribeToWsaAlertMatrixSummaryJob(
+export function runWsaAlertMatrixSummaryJob(
   accountKey: string,
-  jobId: string,
+  dataMode: CsvDataMode,
+  context: string | undefined,
   onEvent: (event: WsaAlertMatrixSummaryJobProgressEvent) => void,
 ): () => void {
-  const source = new EventSource(
-    `${API_BASE_URL}/api/dashboard/account/${accountKey}/wsaAlertMatrix/summary/jobs/${jobId}/events`,
-  )
-
-  source.onmessage = (message) => {
-    const event = JSON.parse(message.data) as WsaAlertMatrixSummaryJobProgressEvent
-    onEvent(event)
-    if (event.type === 'completed' || event.type === 'failed') {
-      source.close()
-    }
-  }
-
-  source.onerror = () => {
-    source.close()
-  }
-
-  return () => source.close()
+  return runJobWithRetry<WsaAlertMatrixSummaryJobProgressEvent>({
+    startJob: () => startWsaAlertMatrixSummaryJob(accountKey, dataMode, context),
+    buildEventsUrl: (jobId) =>
+      `${API_BASE_URL}/api/dashboard/account/${accountKey}/wsaAlertMatrix/summary/jobs/${jobId}/events`,
+    onEvent,
+  })
 }
 
 // Synchronous fetch (no job/SSE wrapper) for components that need the summary JSON directly.

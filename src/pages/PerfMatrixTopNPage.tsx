@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { DashboardLayout } from '../components/DashboardLayout'
 import { CoreWebVitalsLineChart } from '../components/CoreWebVitalsLineChart'
-import { startPerfMatrixTopNJob, subscribeToPerfMatrixTopNJob } from '../services/perfMatrixTopNJobs'
+import { runPerfMatrixTopNJob, getPerfMatrixTopNDownloadUrl, PERF_MATRIX_TOPN_CSV_FILENAME } from '../services/perfMatrixTopNJobs'
 import type {
   CsvDataMode,
   JobProgressLevel,
@@ -25,16 +25,10 @@ const LOG_LEVEL_STYLES: Record<JobProgressLevel, string> = {
   error: 'text-rose-700',
 }
 
-const DATA_MODE_OPTIONS: Array<{ value: CsvDataMode; label: string }> = [
-  { value: 'csv_data_local', label: 'Local (test data)' },
-  { value: 'csv_data_remote', label: 'Remote (NetStorage)' },
-]
-
 export function PerfMatrixTopNPage() {
   const { accountId = '', hostname: hostnameParam } = useParams()
   const [searchParams] = useSearchParams()
-  const initialDataMode = searchParams.get('data') === 'csv_data_remote' ? 'csv_data_remote' : 'csv_data_local'
-  const [dataMode, setDataMode] = useState<CsvDataMode>(initialDataMode)
+  const dataMode: CsvDataMode = 'csv_data_remote'
   const [context, setContext] = useState(searchParams.get('context') ?? '')
   const [status, setStatus] = useState<JobStatus>('idle')
   const [percent, setPercent] = useState(0)
@@ -62,44 +56,33 @@ export function PerfMatrixTopNPage() {
       setColumnFilters({})
       setTrendHostname('')
 
-      try {
-        const jobId = await startPerfMatrixTopNJob(accountId, dataMode, context || undefined)
-        if (!isMounted) {
-          return
-        }
+      unsubscribeRef.current = runPerfMatrixTopNJob(
+        accountId,
+        dataMode,
+        context || undefined,
+        (event: PerfMatrixTopNJobProgressEvent) => {
+          if (!isMounted) {
+            return
+          }
 
-        unsubscribeRef.current = subscribeToPerfMatrixTopNJob(
-          accountId,
-          jobId,
-          (event: PerfMatrixTopNJobProgressEvent) => {
-            if (!isMounted) {
-              return
-            }
+          if (event.type === 'progress') {
+            setPercent(event.percent)
+            setLogs((previous) => [...previous, { message: event.message, level: event.level, timestamp: event.timestamp }])
+            return
+          }
 
-            if (event.type === 'progress') {
-              setPercent(event.percent)
-              setLogs((previous) => [...previous, { message: event.message, level: event.level, timestamp: event.timestamp }])
-              return
-            }
+          if (event.type === 'completed') {
+            setPercent(100)
+            setStatus('completed')
+            setResult(event.result)
+            setTrendHostname(event.result.hostnames[0] ?? '')
+            return
+          }
 
-            if (event.type === 'completed') {
-              setPercent(100)
-              setStatus('completed')
-              setResult(event.result)
-              setTrendHostname(event.result.hostnames[0] ?? '')
-              return
-            }
-
-            setStatus('failed')
-            setError(event.message)
-          },
-        )
-      } catch (startError) {
-        if (isMounted) {
           setStatus('failed')
-          setError(startError instanceof Error ? startError.message : 'Failed to start job')
-        }
-      }
+          setError(event.message)
+        },
+      )
     }
 
     void run()
@@ -214,31 +197,18 @@ export function PerfMatrixTopNPage() {
           <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-lg font-bold text-slate-800">Scan Progress</h2>
             <div className="flex flex-wrap items-center gap-3">
+              <span className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-semibold text-slate-700">
+                Data Source: Remote (NetStorage)
+              </span>
               <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-                Data Source:
-                <select
+                Context (NS base path):
+                <input
                   className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-normal"
-                  value={dataMode}
-                  onChange={(event) => setDataMode(event.target.value as CsvDataMode)}
-                >
-                  {DATA_MODE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                  placeholder="e.g. staticSiteContent"
+                  value={context}
+                  onChange={(event) => setContext(event.target.value)}
+                />
               </label>
-              {dataMode === 'csv_data_remote' ? (
-                <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-                  Context (NS base path):
-                  <input
-                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-normal"
-                    placeholder="e.g. staticSiteContent"
-                    value={context}
-                    onChange={(event) => setContext(event.target.value)}
-                  />
-                </label>
-              ) : null}
               <span className="text-sm font-semibold text-slate-600">
                 {status === 'running' ? `Running… ${percent}%` : status === 'completed' ? 'Completed' : status === 'failed' ? 'Failed' : ''}
               </span>
@@ -261,6 +231,20 @@ export function PerfMatrixTopNPage() {
             ))}
           </ul>
         </section>
+
+        {result ? (
+          <p className="text-xs font-semibold text-slate-600">
+            You can download the data used in this dashboard here:{' '}
+            <a
+              className="text-sky-700 underline"
+              href={getPerfMatrixTopNDownloadUrl(accountId, context || undefined)}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {PERF_MATRIX_TOPN_CSV_FILENAME}
+            </a>
+          </p>
+        ) : null}
 
         {result ? (
           <>

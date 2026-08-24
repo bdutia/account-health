@@ -5,6 +5,18 @@ import type {
   FeatureMatrixSummaryJobProgressEvent,
   FeatureMatrixSummaryResult,
 } from '../types/dashboard'
+import { runJobWithRetry } from './sseJobClient'
+
+export const FEATURE_MATRIX_CSV_FILENAME = 'config-audit.csv'
+
+export function getFeatureMatrixDownloadUrl(accountKey: string, context?: string): string {
+  const params = new URLSearchParams()
+  if (context) {
+    params.set('context', context)
+  }
+  const query = params.toString()
+  return `${API_BASE_URL}/api/dashboard/account/${accountKey}/featureMatrix/download${query ? `?${query}` : ''}`
+}
 
 const DEFAULT_API_BASE_URL = `${import.meta.env.BASE_URL}`.replace(/\/$/, '')
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE_URL
@@ -30,28 +42,18 @@ export async function startFeatureMatrixJob(
   return payload.jobId
 }
 
-export function subscribeToFeatureMatrixJob(
+export function runFeatureMatrixJob(
   accountKey: string,
-  jobId: string,
+  dataMode: CsvDataMode,
+  context: string | undefined,
   onEvent: (event: FeatureMatrixJobProgressEvent) => void,
 ): () => void {
-  const source = new EventSource(
-    `${API_BASE_URL}/api/dashboard/account/${accountKey}/featureMatrix/jobs/${jobId}/events`,
-  )
-
-  source.onmessage = (message) => {
-    const event = JSON.parse(message.data) as FeatureMatrixJobProgressEvent
-    onEvent(event)
-    if (event.type === 'completed' || event.type === 'failed') {
-      source.close()
-    }
-  }
-
-  source.onerror = () => {
-    source.close()
-  }
-
-  return () => source.close()
+  return runJobWithRetry<FeatureMatrixJobProgressEvent>({
+    startJob: () => startFeatureMatrixJob(accountKey, dataMode, context),
+    buildEventsUrl: (jobId) =>
+      `${API_BASE_URL}/api/dashboard/account/${accountKey}/featureMatrix/jobs/${jobId}/events`,
+    onEvent,
+  })
 }
 
 export async function startFeatureMatrixSummaryJob(
@@ -75,28 +77,18 @@ export async function startFeatureMatrixSummaryJob(
   return payload.jobId
 }
 
-export function subscribeToFeatureMatrixSummaryJob(
+export function runFeatureMatrixSummaryJob(
   accountKey: string,
-  jobId: string,
+  dataMode: CsvDataMode,
+  context: string | undefined,
   onEvent: (event: FeatureMatrixSummaryJobProgressEvent) => void,
 ): () => void {
-  const source = new EventSource(
-    `${API_BASE_URL}/api/dashboard/account/${accountKey}/featureMatrix/summary/jobs/${jobId}/events`,
-  )
-
-  source.onmessage = (message) => {
-    const event = JSON.parse(message.data) as FeatureMatrixSummaryJobProgressEvent
-    onEvent(event)
-    if (event.type === 'completed' || event.type === 'failed') {
-      source.close()
-    }
-  }
-
-  source.onerror = () => {
-    source.close()
-  }
-
-  return () => source.close()
+  return runJobWithRetry<FeatureMatrixSummaryJobProgressEvent>({
+    startJob: () => startFeatureMatrixSummaryJob(accountKey, dataMode, context),
+    buildEventsUrl: (jobId) =>
+      `${API_BASE_URL}/api/dashboard/account/${accountKey}/featureMatrix/summary/jobs/${jobId}/events`,
+    onEvent,
+  })
 }
 
 // Synchronous fetch (no job/SSE wrapper) for other components that just need the summary JSON.

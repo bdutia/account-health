@@ -5,6 +5,18 @@ import type {
   SecHostCoverageMatrixSummaryJobProgressEvent,
   SecHostCoverageMatrixSummaryResult,
 } from '../types/dashboard'
+import { runJobWithRetry } from './sseJobClient'
+
+export const SEC_HOST_COVERAGE_MATRIX_CSV_FILENAME = 'hostname-coverage.csv'
+
+export function getSecHostCoverageMatrixDownloadUrl(accountKey: string, context?: string): string {
+  const params = new URLSearchParams()
+  if (context) {
+    params.set('context', context)
+  }
+  const query = params.toString()
+  return `${API_BASE_URL}/api/dashboard/account/${accountKey}/secHostCoverageMatrix/download${query ? `?${query}` : ''}`
+}
 
 const DEFAULT_API_BASE_URL = `${import.meta.env.BASE_URL}`.replace(/\/$/, '')
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE_URL
@@ -30,28 +42,18 @@ export async function startSecHostCoverageMatrixJob(
   return payload.jobId
 }
 
-export function subscribeToSecHostCoverageMatrixJob(
+export function runSecHostCoverageMatrixJob(
   accountKey: string,
-  jobId: string,
+  dataMode: CsvDataMode,
+  context: string | undefined,
   onEvent: (event: SecHostCoverageMatrixJobProgressEvent) => void,
 ): () => void {
-  const source = new EventSource(
-    `${API_BASE_URL}/api/dashboard/account/${accountKey}/secHostCoverageMatrix/jobs/${jobId}/events`,
-  )
-
-  source.onmessage = (message) => {
-    const event = JSON.parse(message.data) as SecHostCoverageMatrixJobProgressEvent
-    onEvent(event)
-    if (event.type === 'completed' || event.type === 'failed') {
-      source.close()
-    }
-  }
-
-  source.onerror = () => {
-    source.close()
-  }
-
-  return () => source.close()
+  return runJobWithRetry<SecHostCoverageMatrixJobProgressEvent>({
+    startJob: () => startSecHostCoverageMatrixJob(accountKey, dataMode, context),
+    buildEventsUrl: (jobId) =>
+      `${API_BASE_URL}/api/dashboard/account/${accountKey}/secHostCoverageMatrix/jobs/${jobId}/events`,
+    onEvent,
+  })
 }
 
 export async function startSecHostCoverageMatrixSummaryJob(
@@ -75,28 +77,18 @@ export async function startSecHostCoverageMatrixSummaryJob(
   return payload.jobId
 }
 
-export function subscribeToSecHostCoverageMatrixSummaryJob(
+export function runSecHostCoverageMatrixSummaryJob(
   accountKey: string,
-  jobId: string,
+  dataMode: CsvDataMode,
+  context: string | undefined,
   onEvent: (event: SecHostCoverageMatrixSummaryJobProgressEvent) => void,
 ): () => void {
-  const source = new EventSource(
-    `${API_BASE_URL}/api/dashboard/account/${accountKey}/secHostCoverageMatrix/summary/jobs/${jobId}/events`,
-  )
-
-  source.onmessage = (message) => {
-    const event = JSON.parse(message.data) as SecHostCoverageMatrixSummaryJobProgressEvent
-    onEvent(event)
-    if (event.type === 'completed' || event.type === 'failed') {
-      source.close()
-    }
-  }
-
-  source.onerror = () => {
-    source.close()
-  }
-
-  return () => source.close()
+  return runJobWithRetry<SecHostCoverageMatrixSummaryJobProgressEvent>({
+    startJob: () => startSecHostCoverageMatrixSummaryJob(accountKey, dataMode, context),
+    buildEventsUrl: (jobId) =>
+      `${API_BASE_URL}/api/dashboard/account/${accountKey}/secHostCoverageMatrix/summary/jobs/${jobId}/events`,
+    onEvent,
+  })
 }
 
 // Synchronous fetch (no job/SSE wrapper) for other components that just need the summary JSON.

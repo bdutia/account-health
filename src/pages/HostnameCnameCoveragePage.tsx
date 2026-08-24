@@ -1,10 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { DashboardLayout } from '../components/DashboardLayout'
-import {
-  startHostnameCnameCoverageJob,
-  subscribeToHostnameCnameCoverageJob,
-} from '../services/hostnameCnameJobs'
+import { runHostnameCnameCoverageJob } from '../services/hostnameCnameJobs'
 import type { HostnameCnameCoverageResult, JobProgressEvent, JobProgressLevel } from '../types/dashboard'
 
 interface LogEntry {
@@ -52,39 +49,27 @@ export function HostnameCnameCoveragePage() {
       setPropertyFilter('')
       setHostnameFilter('')
 
-      try {
-        const jobId = await startHostnameCnameCoverageJob(accountId)
+      unsubscribe = runHostnameCnameCoverageJob(accountId, (event: JobProgressEvent) => {
         if (!isMounted) {
           return
         }
 
-        unsubscribe = subscribeToHostnameCnameCoverageJob(accountId, jobId, (event: JobProgressEvent) => {
-          if (!isMounted) {
-            return
-          }
-
-          if (event.type === 'progress') {
-            setPercent(event.percent)
-            setLogs((previous) => [...previous, { message: event.message, level: event.level, timestamp: event.timestamp }])
-            return
-          }
-
-          if (event.type === 'completed') {
-            setPercent(100)
-            setStatus('completed')
-            setResult(event.result)
-            return
-          }
-
-          setStatus('failed')
-          setError(event.message)
-        })
-      } catch (startError) {
-        if (isMounted) {
-          setStatus('failed')
-          setError(startError instanceof Error ? startError.message : 'Failed to start job')
+        if (event.type === 'progress') {
+          setPercent(event.percent)
+          setLogs((previous) => [...previous, { message: event.message, level: event.level, timestamp: event.timestamp }])
+          return
         }
-      }
+
+        if (event.type === 'completed') {
+          setPercent(100)
+          setStatus('completed')
+          setResult(event.result)
+          return
+        }
+
+        setStatus('failed')
+        setError(event.message)
+      })
     }
 
     void run()

@@ -5,6 +5,18 @@ import type {
   PerfMatrixTopNSummaryJobProgressEvent,
   PerfMatrixTopNSummaryResult,
 } from '../types/dashboard'
+import { runJobWithRetry } from './sseJobClient'
+
+export const PERF_MATRIX_TOPN_CSV_FILENAME = 'traffic-report-hits-by-hostname.csv'
+
+export function getPerfMatrixTopNDownloadUrl(accountKey: string, context?: string): string {
+  const params = new URLSearchParams()
+  if (context) {
+    params.set('context', context)
+  }
+  const query = params.toString()
+  return `${API_BASE_URL}/api/dashboard/account/${accountKey}/perfMatrixTopN/download${query ? `?${query}` : ''}`
+}
 
 const DEFAULT_API_BASE_URL = `${import.meta.env.BASE_URL}`.replace(/\/$/, '')
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE_URL
@@ -30,28 +42,18 @@ export async function startPerfMatrixTopNJob(
   return payload.jobId
 }
 
-export function subscribeToPerfMatrixTopNJob(
+export function runPerfMatrixTopNJob(
   accountKey: string,
-  jobId: string,
+  dataMode: CsvDataMode,
+  context: string | undefined,
   onEvent: (event: PerfMatrixTopNJobProgressEvent) => void,
 ): () => void {
-  const source = new EventSource(
-    `${API_BASE_URL}/api/dashboard/account/${accountKey}/perfMatrixTopN/jobs/${jobId}/events`,
-  )
-
-  source.onmessage = (message) => {
-    const event = JSON.parse(message.data) as PerfMatrixTopNJobProgressEvent
-    onEvent(event)
-    if (event.type === 'completed' || event.type === 'failed') {
-      source.close()
-    }
-  }
-
-  source.onerror = () => {
-    source.close()
-  }
-
-  return () => source.close()
+  return runJobWithRetry<PerfMatrixTopNJobProgressEvent>({
+    startJob: () => startPerfMatrixTopNJob(accountKey, dataMode, context),
+    buildEventsUrl: (jobId) =>
+      `${API_BASE_URL}/api/dashboard/account/${accountKey}/perfMatrixTopN/jobs/${jobId}/events`,
+    onEvent,
+  })
 }
 
 export async function startPerfMatrixTopNSummaryJob(
@@ -75,28 +77,18 @@ export async function startPerfMatrixTopNSummaryJob(
   return payload.jobId
 }
 
-export function subscribeToPerfMatrixTopNSummaryJob(
+export function runPerfMatrixTopNSummaryJob(
   accountKey: string,
-  jobId: string,
+  dataMode: CsvDataMode,
+  context: string | undefined,
   onEvent: (event: PerfMatrixTopNSummaryJobProgressEvent) => void,
 ): () => void {
-  const source = new EventSource(
-    `${API_BASE_URL}/api/dashboard/account/${accountKey}/perfMatrixTopN/summary/jobs/${jobId}/events`,
-  )
-
-  source.onmessage = (message) => {
-    const event = JSON.parse(message.data) as PerfMatrixTopNSummaryJobProgressEvent
-    onEvent(event)
-    if (event.type === 'completed' || event.type === 'failed') {
-      source.close()
-    }
-  }
-
-  source.onerror = () => {
-    source.close()
-  }
-
-  return () => source.close()
+  return runJobWithRetry<PerfMatrixTopNSummaryJobProgressEvent>({
+    startJob: () => startPerfMatrixTopNSummaryJob(accountKey, dataMode, context),
+    buildEventsUrl: (jobId) =>
+      `${API_BASE_URL}/api/dashboard/account/${accountKey}/perfMatrixTopN/summary/jobs/${jobId}/events`,
+    onEvent,
+  })
 }
 
 // Synchronous fetch (no job/SSE wrapper) for other components that just need the summary JSON.

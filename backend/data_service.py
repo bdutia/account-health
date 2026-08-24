@@ -750,7 +750,7 @@ def get_account_hostname_cname_coverage(account_key: str, job: Job) -> dict[str,
 
 CNAME_STATUS_RELATIVE_PATH = Path("REPORTS") / "CSVDATA" / "cname-status.csv"
 CONFIG_SUMMARY_RELATIVE_PATH = Path("REPORTS") / "CSVDATA" / "config-summary.csv"
-CSV_DATA_MODES = {"csv_data_local", "csv_data_remote"}
+CSV_DATA_MODES = {"csv_data_remote"}
 
 
 def get_ns_config() -> dict[str, str]:
@@ -867,9 +867,10 @@ def download_csv_from_netstorage(remote_path: str, local_path: Path, job: Job | 
 def resolve_report_csv_path(
     account_key: str, data_mode: str, relative_path: Path, job: Job | None = None, context: str | None = None
 ) -> Path:
-    """Resolve (and, for remote mode, lazily download/cache) a per-account report CSV path.
+    """Resolve a per-account report CSV path, always downloading a fresh copy from NetStorage.
 
-    `context`, when provided, overrides the NS_BASE_PATH env var for this request only."""
+    There is no local caching: every call re-downloads the file so the dashboard never shows
+    stale data. `context`, when provided, overrides the NS_BASE_PATH env var for this request only."""
     if data_mode not in CSV_DATA_MODES:
         raise ValueError(f"Invalid data mode: {data_mode}. Expected one of {sorted(CSV_DATA_MODES)}")
 
@@ -882,34 +883,31 @@ def resolve_report_csv_path(
     account_relative_path = Path(account_dir) / relative_path
     local_path = get_storage_dir() / data_mode / account_relative_path
 
-    if data_mode == "csv_data_remote" and not local_path.exists():
-        cfg = get_ns_config()
-        cp_code = cfg["cp_code"]
-        base_path = context if context is not None and context.strip() else cfg["base_path"]
-        if not cp_code and job:
-            job.log(
-                "NS_CP_CODE is not set; the remote path will have no CP-code prefix. "
-                "If NetStorage requires one, set NS_CP_CODE.",
-                level="warning",
-            )
-        if not base_path and job:
-            job.log(
-                "NS_BASE_PATH is not set; the remote path will have no base-path segment. "
-                "If NetStorage requires one, set NS_BASE_PATH.",
-                level="warning",
-            )
-        remote_path = "/" + "/".join(
-            part for part in [cp_code, base_path, *account_relative_path.parts] if part
+    cfg = get_ns_config()
+    cp_code = cfg["cp_code"]
+    base_path = context if context is not None and context.strip() else cfg["base_path"]
+    if not cp_code and job:
+        job.log(
+            "NS_CP_CODE is not set; the remote path will have no CP-code prefix. "
+            "If NetStorage requires one, set NS_CP_CODE.",
+            level="warning",
         )
-        if job:
-            job.log(
-                f"Attempting NetStorage download: remote_path={remote_path!r}, "
-                f"local_path={local_path}, cp_code={cp_code!r}, base_path={base_path!r}",
-                percent=15,
-            )
-        download_csv_from_netstorage(remote_path, local_path, job)
-    elif job:
-        job.log(f"Using cached CSV at {local_path}", percent=20)
+    if not base_path and job:
+        job.log(
+            "NS_BASE_PATH is not set; the remote path will have no base-path segment. "
+            "If NetStorage requires one, set NS_BASE_PATH.",
+            level="warning",
+        )
+    remote_path = "/" + "/".join(
+        part for part in [cp_code, base_path, *account_relative_path.parts] if part
+    )
+    if job:
+        job.log(
+            f"Attempting NetStorage download: remote_path={remote_path!r}, "
+            f"local_path={local_path}, cp_code={cp_code!r}, base_path={base_path!r}",
+            percent=15,
+        )
+    download_csv_from_netstorage(remote_path, local_path, job)
 
     if not local_path.exists():
         raise FileNotFoundError(

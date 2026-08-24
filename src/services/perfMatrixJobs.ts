@@ -5,6 +5,18 @@ import type {
   PerfMatrixSummaryJobProgressEvent,
   PerfMatrixSummaryResult,
 } from '../types/dashboard'
+import { runJobWithRetry } from './sseJobClient'
+
+export const PERF_MATRIX_CSV_FILENAME = 'config-summary.csv'
+
+export function getPerfMatrixDownloadUrl(accountKey: string, context?: string): string {
+  const params = new URLSearchParams()
+  if (context) {
+    params.set('context', context)
+  }
+  const query = params.toString()
+  return `${API_BASE_URL}/api/dashboard/account/${accountKey}/perfMatrix/download${query ? `?${query}` : ''}`
+}
 
 const DEFAULT_API_BASE_URL = `${import.meta.env.BASE_URL}`.replace(/\/$/, '')
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE_URL
@@ -30,28 +42,18 @@ export async function startPerfMatrixJob(
   return payload.jobId
 }
 
-export function subscribeToPerfMatrixJob(
+export function runPerfMatrixJob(
   accountKey: string,
-  jobId: string,
+  dataMode: CsvDataMode,
+  context: string | undefined,
   onEvent: (event: PerfMatrixJobProgressEvent) => void,
 ): () => void {
-  const source = new EventSource(
-    `${API_BASE_URL}/api/dashboard/account/${accountKey}/perfMatrix/jobs/${jobId}/events`,
-  )
-
-  source.onmessage = (message) => {
-    const event = JSON.parse(message.data) as PerfMatrixJobProgressEvent
-    onEvent(event)
-    if (event.type === 'completed' || event.type === 'failed') {
-      source.close()
-    }
-  }
-
-  source.onerror = () => {
-    source.close()
-  }
-
-  return () => source.close()
+  return runJobWithRetry<PerfMatrixJobProgressEvent>({
+    startJob: () => startPerfMatrixJob(accountKey, dataMode, context),
+    buildEventsUrl: (jobId) =>
+      `${API_BASE_URL}/api/dashboard/account/${accountKey}/perfMatrix/jobs/${jobId}/events`,
+    onEvent,
+  })
 }
 
 export async function startPerfMatrixSummaryJob(
@@ -75,28 +77,18 @@ export async function startPerfMatrixSummaryJob(
   return payload.jobId
 }
 
-export function subscribeToPerfMatrixSummaryJob(
+export function runPerfMatrixSummaryJob(
   accountKey: string,
-  jobId: string,
+  dataMode: CsvDataMode,
+  context: string | undefined,
   onEvent: (event: PerfMatrixSummaryJobProgressEvent) => void,
 ): () => void {
-  const source = new EventSource(
-    `${API_BASE_URL}/api/dashboard/account/${accountKey}/perfMatrix/summary/jobs/${jobId}/events`,
-  )
-
-  source.onmessage = (message) => {
-    const event = JSON.parse(message.data) as PerfMatrixSummaryJobProgressEvent
-    onEvent(event)
-    if (event.type === 'completed' || event.type === 'failed') {
-      source.close()
-    }
-  }
-
-  source.onerror = () => {
-    source.close()
-  }
-
-  return () => source.close()
+  return runJobWithRetry<PerfMatrixSummaryJobProgressEvent>({
+    startJob: () => startPerfMatrixSummaryJob(accountKey, dataMode, context),
+    buildEventsUrl: (jobId) =>
+      `${API_BASE_URL}/api/dashboard/account/${accountKey}/perfMatrix/summary/jobs/${jobId}/events`,
+    onEvent,
+  })
 }
 
 // Synchronous fetch (no job/SSE wrapper) for other components that just need the summary JSON.

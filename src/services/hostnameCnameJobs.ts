@@ -5,6 +5,18 @@ import type {
   HostnameCnameMatrixSummaryResult,
   JobProgressEvent,
 } from '../types/dashboard'
+import { runJobWithRetry } from './sseJobClient'
+
+export const HOST_MATRIX_CNAME_CSV_FILENAME = 'config-summary.csv'
+
+export function getHostnameCnameMatrixDownloadUrl(accountKey: string, context?: string): string {
+  const params = new URLSearchParams()
+  if (context) {
+    params.set('context', context)
+  }
+  const query = params.toString()
+  return `${API_BASE_URL}/api/dashboard/account/${accountKey}/hostMatrix/cname/download${query ? `?${query}` : ''}`
+}
 
 //const DEFAULT_API_BASE_URL = `${import.meta.env.BASE_URL}api`.replace(/\/$/, '')
 //trying to fix: double api append from front end - vite build: 
@@ -24,28 +36,16 @@ export async function startHostnameCnameCoverageJob(accountKey: string): Promise
   return payload.jobId
 }
 
-export function subscribeToHostnameCnameCoverageJob(
+export function runHostnameCnameCoverageJob(
   accountKey: string,
-  jobId: string,
   onEvent: (event: JobProgressEvent) => void,
 ): () => void {
-  const source = new EventSource(
-    `${API_BASE_URL}/api/dashboard/account/${accountKey}/hostname-cname-coverage/jobs/${jobId}/events`,
-  )
-
-  source.onmessage = (message) => {
-    const event = JSON.parse(message.data) as JobProgressEvent
-    onEvent(event)
-    if (event.type === 'completed' || event.type === 'failed') {
-      source.close()
-    }
-  }
-
-  source.onerror = () => {
-    source.close()
-  }
-
-  return () => source.close()
+  return runJobWithRetry<JobProgressEvent>({
+    startJob: () => startHostnameCnameCoverageJob(accountKey),
+    buildEventsUrl: (jobId) =>
+      `${API_BASE_URL}/api/dashboard/account/${accountKey}/hostname-cname-coverage/jobs/${jobId}/events`,
+    onEvent,
+  })
 }
 
 export async function startHostnameCnameMatrixJob(
@@ -69,28 +69,18 @@ export async function startHostnameCnameMatrixJob(
   return payload.jobId
 }
 
-export function subscribeToHostnameCnameMatrixJob(
+export function runHostnameCnameMatrixJob(
   accountKey: string,
-  jobId: string,
+  dataMode: CsvDataMode,
+  context: string | undefined,
   onEvent: (event: HostnameCnameMatrixJobProgressEvent) => void,
 ): () => void {
-  const source = new EventSource(
-    `${API_BASE_URL}/api/dashboard/account/${accountKey}/hostMatrix/cname/jobs/${jobId}/events`,
-  )
-
-  source.onmessage = (message) => {
-    const event = JSON.parse(message.data) as HostnameCnameMatrixJobProgressEvent
-    onEvent(event)
-    if (event.type === 'completed' || event.type === 'failed') {
-      source.close()
-    }
-  }
-
-  source.onerror = () => {
-    source.close()
-  }
-
-  return () => source.close()
+  return runJobWithRetry<HostnameCnameMatrixJobProgressEvent>({
+    startJob: () => startHostnameCnameMatrixJob(accountKey, dataMode, context),
+    buildEventsUrl: (jobId) =>
+      `${API_BASE_URL}/api/dashboard/account/${accountKey}/hostMatrix/cname/jobs/${jobId}/events`,
+    onEvent,
+  })
 }
 
 export async function startHostnameCnameMatrixSummaryJob(
@@ -114,28 +104,18 @@ export async function startHostnameCnameMatrixSummaryJob(
   return payload.jobId
 }
 
-export function subscribeToHostnameCnameMatrixSummaryJob(
+export function runHostnameCnameMatrixSummaryJob(
   accountKey: string,
-  jobId: string,
+  dataMode: CsvDataMode,
+  context: string | undefined,
   onEvent: (event: HostnameCnameMatrixSummaryJobProgressEvent) => void,
 ): () => void {
-  const source = new EventSource(
-    `${API_BASE_URL}/api/dashboard/account/${accountKey}/hostMatrix/cname/summary/jobs/${jobId}/events`,
-  )
-
-  source.onmessage = (message) => {
-    const event = JSON.parse(message.data) as HostnameCnameMatrixSummaryJobProgressEvent
-    onEvent(event)
-    if (event.type === 'completed' || event.type === 'failed') {
-      source.close()
-    }
-  }
-
-  source.onerror = () => {
-    source.close()
-  }
-
-  return () => source.close()
+  return runJobWithRetry<HostnameCnameMatrixSummaryJobProgressEvent>({
+    startJob: () => startHostnameCnameMatrixSummaryJob(accountKey, dataMode, context),
+    buildEventsUrl: (jobId) =>
+      `${API_BASE_URL}/api/dashboard/account/${accountKey}/hostMatrix/cname/summary/jobs/${jobId}/events`,
+    onEvent,
+  })
 }
 
 // Synchronous fetch (no job/SSE wrapper) for other components that just need the summary JSON.

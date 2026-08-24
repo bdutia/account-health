@@ -34,6 +34,12 @@ from backend.data_service import (
     get_account_dashboard_data,
     get_summary_dashboard_data,
     get_summary_dashboard_debug,
+    resolve_report_csv_path,
+    CONFIG_SUMMARY_RELATIVE_PATH,
+    CONFIG_AUDIT_RELATIVE_PATH,
+    HOSTNAME_COVERAGE_RELATIVE_PATH,
+    TRAFFIC_REPORT_RELATIVE_PATH,
+    WSA_ALERT_RELATIVE_PATH,
 )
 from backend.job_manager import Job, job_manager
 
@@ -110,6 +116,19 @@ def _job_event_stream(job: Job) -> StreamingResponse:
     return StreamingResponse(event_stream(), media_type='text/event-stream')
 
 
+def _download_report_csv(account_key: str, relative_path: Path, context: str | None) -> FileResponse:
+    """Always re-download the report CSV from NetStorage (no caching) and return it as a file attachment."""
+    try:
+        csv_path = resolve_report_csv_path(account_key, 'csv_data_remote', relative_path, None, context)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error))
+    return FileResponse(csv_path, filename=csv_path.name, media_type='text/csv')
+
+
 @app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/hostname-cname-coverage/jobs')
 def start_hostname_cname_coverage_job(account_key: str) -> dict[str, object]:
     job = job_manager.create()
@@ -128,7 +147,7 @@ def stream_hostname_cname_coverage_job(account_key: str, job_id: str) -> Streami
 @app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/hostMatrix/cname/jobs')
 def start_hostname_cname_matrix_job(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
 ) -> dict[str, object]:
     job = job_manager.create()
@@ -149,7 +168,7 @@ def stream_hostname_cname_matrix_job(account_key: str, job_id: str) -> Streaming
 @app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/hostMatrix/cname/summary/jobs')
 def start_hostname_cname_matrix_summary_job(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
 ) -> dict[str, object]:
     job = job_manager.create()
@@ -170,7 +189,7 @@ def stream_hostname_cname_matrix_summary_job(account_key: str, job_id: str) -> S
 @app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/hostMatrix/cname/summary')
 def hostname_cname_matrix_summary_json(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
     jsonOut: bool = Query(True),
 ) -> dict[str, object]:
@@ -181,10 +200,15 @@ def hostname_cname_matrix_summary_json(
         raise HTTPException(status_code=500, detail=str(error))
 
 
+@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/hostMatrix/cname/download')
+def download_hostname_cname_matrix_csv(account_key: str, context: str | None = Query(None)) -> FileResponse:
+    return _download_report_csv(account_key, CONFIG_SUMMARY_RELATIVE_PATH, context)
+
+
 @app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/featureMatrix/jobs')
 def start_feature_matrix_job(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
 ) -> dict[str, object]:
     job = job_manager.create()
@@ -205,7 +229,7 @@ def stream_feature_matrix_job(account_key: str, job_id: str) -> StreamingRespons
 @app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/featureMatrix/summary/jobs')
 def start_feature_matrix_summary_job(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
 ) -> dict[str, object]:
     job = job_manager.create()
@@ -226,7 +250,7 @@ def stream_feature_matrix_summary_job(account_key: str, job_id: str) -> Streamin
 @app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/featureMatrix/summary')
 def feature_matrix_summary_json(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
     jsonOut: bool = Query(True),
 ) -> dict[str, object]:
@@ -240,7 +264,7 @@ def feature_matrix_summary_json(
 @app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/featureMatrix/scoreCard')
 def feature_matrix_scorecard_json(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
     jsonOut: bool = Query(True),
 ) -> dict[str, object]:
@@ -251,10 +275,15 @@ def feature_matrix_scorecard_json(
         raise HTTPException(status_code=500, detail=str(error))
 
 
+@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/featureMatrix/download')
+def download_feature_matrix_csv(account_key: str, context: str | None = Query(None)) -> FileResponse:
+    return _download_report_csv(account_key, CONFIG_AUDIT_RELATIVE_PATH, context)
+
+
 @app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/secHostCoverageMatrix/jobs')
 def start_sec_host_coverage_matrix_job(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
 ) -> dict[str, object]:
     job = job_manager.create()
@@ -275,7 +304,7 @@ def stream_sec_host_coverage_matrix_job(account_key: str, job_id: str) -> Stream
 @app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/secHostCoverageMatrix/summary/jobs')
 def start_sec_host_coverage_matrix_summary_job(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
 ) -> dict[str, object]:
     job = job_manager.create()
@@ -296,7 +325,7 @@ def stream_sec_host_coverage_matrix_summary_job(account_key: str, job_id: str) -
 @app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/secHostCoverageMatrix/summary')
 def sec_host_coverage_matrix_summary_json(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
     jsonOut: bool = Query(True),
 ) -> dict[str, object]:
@@ -310,7 +339,7 @@ def sec_host_coverage_matrix_summary_json(
 @app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/secHostCoverageMatrix/scoreCard')
 def sec_host_coverage_matrix_scorecard_json(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
     jsonOut: bool = Query(True),
 ) -> dict[str, object]:
@@ -321,10 +350,15 @@ def sec_host_coverage_matrix_scorecard_json(
         raise HTTPException(status_code=500, detail=str(error))
 
 
+@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/secHostCoverageMatrix/download')
+def download_sec_host_coverage_matrix_csv(account_key: str, context: str | None = Query(None)) -> FileResponse:
+    return _download_report_csv(account_key, HOSTNAME_COVERAGE_RELATIVE_PATH, context)
+
+
 @app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/trafficMatrix/jobs')
 def start_traffic_matrix_job(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
 ) -> dict[str, object]:
     job = job_manager.create()
@@ -345,7 +379,7 @@ def stream_traffic_matrix_job(account_key: str, job_id: str) -> StreamingRespons
 @app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/trafficMatrix/summary/jobs')
 def start_traffic_matrix_summary_job(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
 ) -> dict[str, object]:
     job = job_manager.create()
@@ -366,7 +400,7 @@ def stream_traffic_matrix_summary_job(account_key: str, job_id: str) -> Streamin
 @app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/trafficMatrix/summary')
 def traffic_matrix_summary_json(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
     jsonOut: bool = Query(True),
 ) -> dict[str, object]:
@@ -380,7 +414,7 @@ def traffic_matrix_summary_json(
 @app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/trafficMatrix/scoreCard')
 def traffic_matrix_scorecard_json(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
     jsonOut: bool = Query(True),
 ) -> dict[str, object]:
@@ -391,10 +425,15 @@ def traffic_matrix_scorecard_json(
         raise HTTPException(status_code=500, detail=str(error))
 
 
+@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/trafficMatrix/download')
+def download_traffic_matrix_csv(account_key: str, context: str | None = Query(None)) -> FileResponse:
+    return _download_report_csv(account_key, TRAFFIC_REPORT_RELATIVE_PATH, context)
+
+
 @app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/perfMatrix/jobs')
 def start_perf_matrix_job(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
 ) -> dict[str, object]:
     job = job_manager.create()
@@ -415,7 +454,7 @@ def stream_perf_matrix_job(account_key: str, job_id: str) -> StreamingResponse:
 @app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/perfMatrix/summary/jobs')
 def start_perf_matrix_summary_job(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
 ) -> dict[str, object]:
     job = job_manager.create()
@@ -436,7 +475,7 @@ def stream_perf_matrix_summary_job(account_key: str, job_id: str) -> StreamingRe
 @app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/perfMatrix/summary')
 def perf_matrix_summary_json(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
     jsonOut: bool = Query(True),
 ) -> dict[str, object]:
@@ -450,7 +489,7 @@ def perf_matrix_summary_json(
 @app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/perfMatrix/scoreCard')
 def perf_matrix_scorecard_json(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
     jsonOut: bool = Query(True),
 ) -> dict[str, object]:
@@ -461,10 +500,15 @@ def perf_matrix_scorecard_json(
         raise HTTPException(status_code=500, detail=str(error))
 
 
+@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/perfMatrix/download')
+def download_perf_matrix_csv(account_key: str, context: str | None = Query(None)) -> FileResponse:
+    return _download_report_csv(account_key, CONFIG_SUMMARY_RELATIVE_PATH, context)
+
+
 @app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/perfMatrixTopN/jobs')
 def start_perf_matrix_topn_job(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
 ) -> dict[str, object]:
     job = job_manager.create()
@@ -485,7 +529,7 @@ def stream_perf_matrix_topn_job(account_key: str, job_id: str) -> StreamingRespo
 @app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/perfMatrixTopN/summary/jobs')
 def start_perf_matrix_topn_summary_job(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
 ) -> dict[str, object]:
     job = job_manager.create()
@@ -506,7 +550,7 @@ def stream_perf_matrix_topn_summary_job(account_key: str, job_id: str) -> Stream
 @app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/perfMatrixTopN/summary')
 def perf_matrix_topn_summary_json(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
     jsonOut: bool = Query(True),
 ) -> dict[str, object]:
@@ -520,7 +564,7 @@ def perf_matrix_topn_summary_json(
 @app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/perfMatrixTopN/scoreCard')
 def perf_matrix_topn_scorecard_json(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
     jsonOut: bool = Query(True),
 ) -> dict[str, object]:
@@ -531,10 +575,15 @@ def perf_matrix_topn_scorecard_json(
         raise HTTPException(status_code=500, detail=str(error))
 
 
+@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/perfMatrixTopN/download')
+def download_perf_matrix_topn_csv(account_key: str, context: str | None = Query(None)) -> FileResponse:
+    return _download_report_csv(account_key, TRAFFIC_REPORT_RELATIVE_PATH, context)
+
+
 @app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/wsaAlertMatrix/jobs')
 def start_wsa_alert_matrix_job(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
 ) -> dict[str, object]:
     job = job_manager.create()
@@ -555,7 +604,7 @@ def stream_wsa_alert_matrix_job(account_key: str, job_id: str) -> StreamingRespo
 @app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/wsaAlertMatrix/summary/jobs')
 def start_wsa_alert_matrix_summary_job(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
 ) -> dict[str, object]:
     job = job_manager.create()
@@ -576,7 +625,7 @@ def stream_wsa_alert_matrix_summary_job(account_key: str, job_id: str) -> Stream
 @app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/wsaAlertMatrix/summary')
 def wsa_alert_matrix_summary_json(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
     jsonOut: bool = Query(True),
 ) -> dict[str, object]:
@@ -590,7 +639,7 @@ def wsa_alert_matrix_summary_json(
 @app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/wsaAlertMatrix/scoreCard')
 def wsa_alert_matrix_scorecard_json(
     account_key: str,
-    data: str = Query('csv_data_local', pattern='^(csv_data_local|csv_data_remote)$'),
+    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
     context: str | None = Query(None),
     jsonOut: bool = Query(True),
 ) -> dict[str, object]:
@@ -599,6 +648,11 @@ def wsa_alert_matrix_scorecard_json(
         return get_account_wsa_alert_matrix_scorecard(account_key, data, None, context)
     except Exception as error:
         raise HTTPException(status_code=500, detail=str(error))
+
+
+@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/wsaAlertMatrix/download')
+def download_wsa_alert_matrix_csv(account_key: str, context: str | None = Query(None)) -> FileResponse:
+    return _download_report_csv(account_key, WSA_ALERT_RELATIVE_PATH, context)
 
 
 DIST_DIR = Path(__file__).resolve().parent.parent / 'dist'

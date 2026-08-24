@@ -1,15 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { DashboardLayout } from '../components/DashboardLayout'
-import { fetchPerfMatrixTopNScoreCard } from '../services/perfMatrixTopNJobs'
+import { fetchPerfMatrixTopNScoreCard, getPerfMatrixTopNDownloadUrl, PERF_MATRIX_TOPN_CSV_FILENAME } from '../services/perfMatrixTopNJobs'
 import type { CsvDataMode, PerfMatrixTopNScoreCardResult } from '../types/dashboard'
 
 type LoadStatus = 'idle' | 'loading' | 'loaded' | 'failed'
-
-const DATA_MODE_OPTIONS: Array<{ value: CsvDataMode; label: string }> = [
-  { value: 'csv_data_local', label: 'Local (test data)' },
-  { value: 'csv_data_remote', label: 'Remote (NetStorage)' },
-]
 
 const RATING_STYLES: Record<string, string> = {
   good: 'bg-emerald-100 text-emerald-700',
@@ -31,8 +26,7 @@ function ratingBadge(rating: string | null) {
 export function PerfMatrixTopNScoreCardPage() {
   const { accountId = '' } = useParams()
   const [searchParams] = useSearchParams()
-  const initialDataMode = searchParams.get('data') === 'csv_data_remote' ? 'csv_data_remote' : 'csv_data_local'
-  const [dataMode, setDataMode] = useState<CsvDataMode>(initialDataMode)
+  const dataMode: CsvDataMode = 'csv_data_remote'
   const [context, setContext] = useState(searchParams.get('context') ?? '')
   const [status, setStatus] = useState<LoadStatus>('idle')
   const [result, setResult] = useState<PerfMatrixTopNScoreCardResult | null>(null)
@@ -108,31 +102,18 @@ export function PerfMatrixTopNScoreCardPage() {
           <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-lg font-bold text-slate-800">ScoreCard</h2>
             <div className="flex flex-wrap items-center gap-3">
+              <span className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-semibold text-slate-700">
+                Data Source: Remote (NetStorage)
+              </span>
               <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-                Data Source:
-                <select
+                Context (NS base path):
+                <input
                   className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-normal"
-                  value={dataMode}
-                  onChange={(event) => setDataMode(event.target.value as CsvDataMode)}
-                >
-                  {DATA_MODE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                  placeholder="e.g. staticSiteContent"
+                  value={context}
+                  onChange={(event) => setContext(event.target.value)}
+                />
               </label>
-              {dataMode === 'csv_data_remote' ? (
-                <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-                  Context (NS base path):
-                  <input
-                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-normal"
-                    placeholder="e.g. staticSiteContent"
-                    value={context}
-                    onChange={(event) => setContext(event.target.value)}
-                  />
-                </label>
-              ) : null}
               <span className="text-sm font-semibold text-slate-600">
                 {status === 'loading' ? 'Loading…' : status === 'loaded' ? 'Loaded' : status === 'failed' ? 'Failed' : ''}
               </span>
@@ -141,6 +122,20 @@ export function PerfMatrixTopNScoreCardPage() {
 
           {error ? <p className="mt-3 text-sm font-semibold text-rose-700">{error}</p> : null}
         </section>
+
+        {result ? (
+          <p className="text-xs font-semibold text-slate-600">
+            You can download the data used in this dashboard here:{' '}
+            <a
+              className="text-sky-700 underline"
+              href={getPerfMatrixTopNDownloadUrl(accountId, context || undefined)}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {PERF_MATRIX_TOPN_CSV_FILENAME}
+            </a>
+          </p>
+        ) : null}
 
         {result ? (
           <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-card">

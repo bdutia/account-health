@@ -10,7 +10,6 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.data_service import (
     get_account_hostname_coverage,
-    get_account_hostname_cname_coverage,
     get_account_hostname_cname_matrix,
     get_account_hostname_cname_matrix_summary,
     get_account_feature_matrix,
@@ -22,9 +21,6 @@ from backend.data_service import (
     get_account_traffic_matrix,
     get_account_traffic_matrix_summary,
     get_account_traffic_matrix_scorecard,
-    get_account_perf_matrix,
-    get_account_perf_matrix_summary,
-    get_account_perf_matrix_scorecard,
     get_account_perf_matrix_topn,
     get_account_perf_matrix_topn_summary,
     get_account_perf_matrix_topn_scorecard,
@@ -127,21 +123,6 @@ def _download_report_csv(account_key: str, relative_path: Path, context: str | N
     except Exception as error:
         raise HTTPException(status_code=500, detail=str(error))
     return FileResponse(csv_path, filename=csv_path.name, media_type='text/csv')
-
-
-@app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/hostname-cname-coverage/jobs')
-def start_hostname_cname_coverage_job(account_key: str) -> dict[str, object]:
-    job = job_manager.create()
-    job_manager.run_in_background(job, lambda active_job: get_account_hostname_cname_coverage(account_key, active_job))
-    return {'jobId': job.job_id}
-
-
-@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/hostname-cname-coverage/jobs/{{job_id}}/events')
-def stream_hostname_cname_coverage_job(account_key: str, job_id: str) -> StreamingResponse:
-    job = job_manager.get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail='Job not found')
-    return _job_event_stream(job)
 
 
 @app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/hostMatrix/cname/jobs')
@@ -428,81 +409,6 @@ def traffic_matrix_scorecard_json(
 @app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/trafficMatrix/download')
 def download_traffic_matrix_csv(account_key: str, context: str | None = Query(None)) -> FileResponse:
     return _download_report_csv(account_key, TRAFFIC_REPORT_RELATIVE_PATH, context)
-
-
-@app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/perfMatrix/jobs')
-def start_perf_matrix_job(
-    account_key: str,
-    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
-    context: str | None = Query(None),
-) -> dict[str, object]:
-    job = job_manager.create()
-    job_manager.run_in_background(
-        job, lambda active_job: get_account_perf_matrix(account_key, data, active_job, context)
-    )
-    return {'jobId': job.job_id}
-
-
-@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/perfMatrix/jobs/{{job_id}}/events')
-def stream_perf_matrix_job(account_key: str, job_id: str) -> StreamingResponse:
-    job = job_manager.get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail='Job not found')
-    return _job_event_stream(job)
-
-
-@app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/perfMatrix/summary/jobs')
-def start_perf_matrix_summary_job(
-    account_key: str,
-    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
-    context: str | None = Query(None),
-) -> dict[str, object]:
-    job = job_manager.create()
-    job_manager.run_in_background(
-        job, lambda active_job: get_account_perf_matrix_summary(account_key, data, active_job, context)
-    )
-    return {'jobId': job.job_id}
-
-
-@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/perfMatrix/summary/jobs/{{job_id}}/events')
-def stream_perf_matrix_summary_job(account_key: str, job_id: str) -> StreamingResponse:
-    job = job_manager.get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail='Job not found')
-    return _job_event_stream(job)
-
-
-@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/perfMatrix/summary')
-def perf_matrix_summary_json(
-    account_key: str,
-    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
-    context: str | None = Query(None),
-    jsonOut: bool = Query(True),
-) -> dict[str, object]:
-    """Synchronous summary endpoint (no job/SSE wrapper) for other components to consume directly."""
-    try:
-        return get_account_perf_matrix_summary(account_key, data, None, context)
-    except Exception as error:
-        raise HTTPException(status_code=500, detail=str(error))
-
-
-@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/perfMatrix/scoreCard')
-def perf_matrix_scorecard_json(
-    account_key: str,
-    data: str = Query('csv_data_remote', pattern='^csv_data_remote$'),
-    context: str | None = Query(None),
-    jsonOut: bool = Query(True),
-) -> dict[str, object]:
-    """Synchronous scoreCard endpoint: totals/hostnames JSON, no job/SSE wrapper."""
-    try:
-        return get_account_perf_matrix_scorecard(account_key, data, None, context)
-    except Exception as error:
-        raise HTTPException(status_code=500, detail=str(error))
-
-
-@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/perfMatrix/download')
-def download_perf_matrix_csv(account_key: str, context: str | None = Query(None)) -> FileResponse:
-    return _download_report_csv(account_key, CONFIG_SUMMARY_RELATIVE_PATH, context)
 
 
 @app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/perfMatrixTopN/jobs')

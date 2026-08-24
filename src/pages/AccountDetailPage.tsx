@@ -143,12 +143,6 @@ export function AccountDetailPage() {
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 <HealthWidgetLink
                   variant="pulseMonitor"
-                  to={`/account/${accountId}/hostname-cname-coverage`}
-                  title="Hostname Health"
-                  description="Run Hostname & CNAME Coverage Scan"
-                />
-                <HealthWidgetLink
-                  variant="pulseMonitor"
                   to={`/account/${accountId}/hostmatrix/cname`}
                   title="Hostname Diagnostic Score Card"
                   description="View Hostname CNAME Matrix"
@@ -219,24 +213,6 @@ export function AccountDetailPage() {
                 Performance Matrix Stethoscope Check
               </h3>
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                <HealthWidgetLink
-                  variant="stethoscope"
-                  to={`/account/${accountId}/perfMatrix`}
-                  title="Performance Matrix"
-                  description="View Performance Matrix"
-                />
-                <HealthWidgetLink
-                  variant="stethoscope"
-                  to={`/account/${accountId}/perfMatrix/summary`}
-                  title="Performance Matrix Summary"
-                  description="View Performance Matrix Summary"
-                />
-                <HealthWidgetLink
-                  variant="stethoscope"
-                  to={`/account/${accountId}/perfMatrix/scoreCard`}
-                  title="Performance Matrix Score Card"
-                  description="View Performance Matrix ScoreCard"
-                />
                 <HealthWidgetLink
                   variant="stethoscope"
                   to={`/account/${accountId}/perfMatrixTopN`}

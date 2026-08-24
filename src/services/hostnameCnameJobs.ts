@@ -3,7 +3,6 @@ import type {
   HostnameCnameMatrixJobProgressEvent,
   HostnameCnameMatrixSummaryJobProgressEvent,
   HostnameCnameMatrixSummaryResult,
-  JobProgressEvent,
 } from '../types/dashboard'
 import { runJobWithRetry } from './sseJobClient'
 
@@ -22,31 +21,6 @@ export function getHostnameCnameMatrixDownloadUrl(accountKey: string, context?: 
 //trying to fix: double api append from front end - vite build: 
 const DEFAULT_API_BASE_URL = `${import.meta.env.BASE_URL}`.replace(/\/$/, '')
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE_URL
-
-export async function startHostnameCnameCoverageJob(accountKey: string): Promise<string> {
-  const response = await fetch(
-    `${API_BASE_URL}/api/dashboard/account/${accountKey}/hostname-cname-coverage/jobs`,
-    { method: 'POST' },
-  )
-  if (!response.ok) {
-    throw new Error(`Failed to start hostname CNAME coverage job: ${response.status}`)
-  }
-
-  const payload = (await response.json()) as { jobId: string }
-  return payload.jobId
-}
-
-export function runHostnameCnameCoverageJob(
-  accountKey: string,
-  onEvent: (event: JobProgressEvent) => void,
-): () => void {
-  return runJobWithRetry<JobProgressEvent>({
-    startJob: () => startHostnameCnameCoverageJob(accountKey),
-    buildEventsUrl: (jobId) =>
-      `${API_BASE_URL}/api/dashboard/account/${accountKey}/hostname-cname-coverage/jobs/${jobId}/events`,
-    onEvent,
-  })
-}
 
 export async function startHostnameCnameMatrixJob(
   accountKey: string,

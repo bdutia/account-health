@@ -6,11 +6,17 @@ interface DashboardLayoutProps extends PropsWithChildren {
   owner?: string
 }
 
-const QUARTERS = ['Q1 2024', 'Q2 2024', 'Q3 2024', 'Q4 2024']
+const getStartedQuarters = (referenceDate = new Date()) => {
+  const currentYear = referenceDate.getFullYear()
+  const currentQuarter = Math.floor(referenceDate.getMonth() / 3) + 1
+
+  return Array.from({ length: currentQuarter }, (_, index) => `Q${index + 1} ${currentYear}`)
+}
 
 export function DashboardLayout({ title, owner, children }: DashboardLayoutProps) {
   const location = useLocation()
   const isDetail = location.pathname.includes('/account/')
+  const quarters = getStartedQuarters()
 
   return (
     <main className="min-h-screen bg-page text-slate-800">
@@ -29,7 +35,7 @@ export function DashboardLayout({ title, owner, children }: DashboardLayoutProps
             <label className="flex items-center gap-2 font-semibold text-slate-200">
               Select Quarter:
               <select className="rounded-md border border-slate-500 bg-slate-50 px-3 py-1 text-slate-800">
-                {QUARTERS.map((quarter) => (
+                {quarters.map((quarter) => (
                   <option key={quarter}>{quarter}</option>
                 ))}
               </select>

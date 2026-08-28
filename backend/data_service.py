@@ -853,6 +853,97 @@ def resolve_report_csv_path(
     return local_path
 
 
+ALL_ACCOUNTS_SUMMARY_RELATIVE_PATH = Path("allAccounts") / "all_accounts_summary.json"
+ACCOUNT_MAPPING_RELATIVE_PATH = Path("allAccounts") / "account_mapping.json"
+
+
+def resolve_ns_remote_path(relative_path: Path, context: str | None = None) -> tuple[str, str]:
+    """Build a NetStorage remote path from CP code + base path (LIVE by default, or an archive context override)."""
+    cfg = get_ns_config()
+    base_path = context.strip().strip("/") if context and context.strip() else cfg["base_path"]
+    remote_path = "/" + "/".join(part for part in [cfg["cp_code"], base_path, *relative_path.parts] if part)
+    return remote_path, base_path
+
+
+def download_ns_json(relative_path: Path, context: str | None = None) -> Any:
+    """Download and parse a JSON file from NetStorage: LIVE by default, or an archive/<date> context override.
+
+    Always downloads a fresh copy (no caching), reusing the generic NetStorage download used for CSV reports."""
+    remote_path, base_path = resolve_ns_remote_path(relative_path, context)
+    local_path = get_storage_dir() / "ns_json_cache" / (base_path or "live") / relative_path
+    download_csv_from_netstorage(remote_path, local_path)
+    return json.loads(local_path.read_text(encoding="utf-8"))
+
+
+def is_archive_context(context: str | None) -> bool:
+    return bool(context and context.strip())
+
+
+def get_ns_summary_dashboard_data(context: str | None = None) -> dict[str, Any]:
+    """Fetch all_accounts_summary.json from NetStorage: LIVE by default, or from the given archive context."""
+    normalized_context = context.strip() if is_archive_context(context) else None
+    try:
+        data = download_ns_json(ALL_ACCOUNTS_SUMMARY_RELATIVE_PATH, normalized_context)
+        return {
+            "source": "netstorage-archive" if normalized_context else "netstorage-live",
+            "context": normalized_context,
+            "data": data,
+        }
+    except Exception as error:
+        return {
+            "source": "netstorage-error",
+            "context": normalized_context,
+            "data": None,
+            "error": str(error),
+        }
+
+
+def get_ns_account_mapping() -> dict[str, Any]:
+    """Fetch account_mapping.json from the LIVE NetStorage location, used to populate the account search widget."""
+    try:
+        payload = download_ns_json(ACCOUNT_MAPPING_RELATIVE_PATH, None)
+        entries: list[dict[str, str]] = []
+        if isinstance(payload, dict):
+            for key, value in payload.items():
+                if not isinstance(value, dict):
+                    continue
+                entries.append(
+                    {
+                        "accountName": str(value.get("accountName") or key),
+                        "accountId": str(value.get("accountId") or key),
+                        "csvAccountDir": str(value.get("csvAccountDir") or key),
+                    }
+                )
+        return {"source": "netstorage-live", "data": entries}
+    except Exception as error:
+        return {"source": "netstorage-error", "data": [], "error": str(error)}
+
+
+def get_ns_account_dashboard_data(account_key: str, context: str | None = None) -> dict[str, Any]:
+    """Fetch account_<accountName>_summary.json from NetStorage: LIVE by default, or from the given archive context."""
+    normalized_context = context.strip() if is_archive_context(context) else None
+    try:
+        mapping = load_account_id_map()
+        account_metadata = mapping.get(account_key)
+        if not account_metadata:
+            raise ValueError(f"No mapping found for account key: {account_key}")
+        account_name = account_metadata.get("accountName") or account_key
+        relative_path = Path(account_name) / f"account_{account_name}_summary.json"
+        data = download_ns_json(relative_path, normalized_context)
+        return {
+            "source": "netstorage-archive" if normalized_context else "netstorage-live",
+            "context": normalized_context,
+            "data": data,
+        }
+    except Exception as error:
+        return {
+            "source": "netstorage-error",
+            "context": normalized_context,
+            "data": None,
+            "error": str(error),
+        }
+
+
 def read_csv_as_json(path: Path) -> tuple[list[str], list[dict[str, str]]]:
     """Read a CSV file, preserving its header row as the JSON column names."""
     with path.open(newline="", encoding="utf-8") as csv_file:

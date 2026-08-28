@@ -30,6 +30,9 @@ from backend.data_service import (
     get_account_dashboard_data,
     get_summary_dashboard_data,
     get_summary_dashboard_debug,
+    get_ns_account_dashboard_data,
+    get_ns_account_mapping,
+    get_ns_summary_dashboard_data,
     resolve_report_csv_path,
     CONFIG_SUMMARY_RELATIVE_PATH,
     CONFIG_AUDIT_RELATIVE_PATH,
@@ -74,6 +77,26 @@ def health() -> dict[str, object]:
 @app.get(f'{API_PREFIX}/dashboard/summary')
 def summary_dashboard() -> dict[str, object]:
     return get_summary_dashboard_data()
+
+
+@app.get(f'{API_PREFIX}/dashboard/ns/summary')
+def ns_summary_dashboard(context: str | None = Query(None)) -> dict[str, object]:
+    """LIVE by default (NSCPCODE/staticSiteContent/allAccounts/all_accounts_summary.json); pass
+    context=archive/<date> to load the archived snapshot instead."""
+    return get_ns_summary_dashboard_data(context)
+
+
+@app.get(f'{API_PREFIX}/dashboard/ns/account-mapping')
+def ns_account_mapping() -> dict[str, object]:
+    """Always LIVE: NSCPCODE/staticSiteContent/allAccounts/account_mapping.json, used for the account search widget."""
+    return get_ns_account_mapping()
+
+
+@app.get(f'{API_PREFIX}/dashboard/ns/account/{{account_key}}')
+def ns_account_dashboard(account_key: str, context: str | None = Query(None)) -> dict[str, object]:
+    """LIVE by default (NSCPCODE/staticSiteContent/{accountName}/account_{accountName}_summary.json); pass
+    context=archive/<date> to load the archived snapshot instead."""
+    return get_ns_account_dashboard_data(account_key, context)
 
 
 @app.get(f'{API_PREFIX}/dashboard/debug')

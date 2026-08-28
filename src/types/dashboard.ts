@@ -35,6 +35,12 @@ export interface SummaryPanel {
   items: PanelItem[]
 }
 
+export interface AccountMappingEntry {
+  accountName: string
+  accountId: string
+  csvAccountDir: string
+}
+
 export interface DetailPillar {
   id: string
   title: string

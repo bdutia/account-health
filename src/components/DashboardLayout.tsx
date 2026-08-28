@@ -1,22 +1,31 @@
 import type { PropsWithChildren } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
 
 interface DashboardLayoutProps extends PropsWithChildren {
   title: string
   owner?: string
 }
 
-const getStartedQuarters = (referenceDate = new Date()) => {
-  const currentYear = referenceDate.getFullYear()
-  const currentQuarter = Math.floor(referenceDate.getMonth() / 3) + 1
-
-  return Array.from({ length: currentQuarter }, (_, index) => `Q${index + 1} ${currentYear}`)
-}
-
 export function DashboardLayout({ title, owner, children }: DashboardLayoutProps) {
   const location = useLocation()
   const isDetail = location.pathname.includes('/account/')
-  const quarters = getStartedQuarters()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const archiveValue = searchParams.get('archive') ?? ''
+
+  function handleArchiveChange(nextValue: string) {
+    setSearchParams(
+      (previous) => {
+        const params = new URLSearchParams(previous)
+        if (nextValue.trim()) {
+          params.set('archive', nextValue)
+        } else {
+          params.delete('archive')
+        }
+        return params
+      },
+      { replace: true },
+    )
+  }
 
   return (
     <main className="min-h-screen bg-page text-slate-800">
@@ -33,12 +42,13 @@ export function DashboardLayout({ title, owner, children }: DashboardLayoutProps
               )}
             </div>
             <label className="flex items-center gap-2 font-semibold text-slate-200">
-              Select Quarter:
-              <select className="rounded-md border border-slate-500 bg-slate-50 px-3 py-1 text-slate-800">
-                {quarters.map((quarter) => (
-                  <option key={quarter}>{quarter}</option>
-                ))}
-              </select>
+              Archive(s):
+              <input
+                className="w-56 rounded-md border border-slate-500 bg-slate-50 px-3 py-1 text-slate-800"
+                placeholder="e.g. archive/20260819"
+                value={archiveValue}
+                onChange={(event) => handleArchiveChange(event.target.value)}
+              />
             </label>
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -55,3 +65,4 @@ export function DashboardLayout({ title, owner, children }: DashboardLayoutProps
     </main>
   )
 }
+

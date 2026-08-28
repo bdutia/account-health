@@ -1,8 +1,5 @@
 import type { AccountDetail, AccountMappingEntry, SummaryDashboardData } from '../types/dashboard'
 
-const DEFAULT_API_BASE_URL = `${import.meta.env.BASE_URL}api`.replace(/\/$/, '')
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE_URL
-
 type NsSource = 'netstorage-live' | 'netstorage-archive' | 'netstorage-error'
 
 interface NsResponse<T> {
@@ -39,7 +36,7 @@ const API_BASE = getApiBase()
 /** LIVE by default; pass an archive context (e.g. "archive/20260819") to load that snapshot instead. */
 export async function fetchNsSummaryDashboardData(archiveContext?: string): Promise<NsResult<SummaryDashboardData>> {
   try {
-    const response = await fetch(`${API_BASE}/api/dashboard/ns/summary${buildContextQuery(archiveContext)}`)
+    const response = await fetch(`${API_BASE}/dashboard/ns/summary${buildContextQuery(archiveContext)}`)
     const payload = (await response.json()) as NsResponse<SummaryDashboardData | null>
     return { data: payload.data, source: payload.source, context: payload.context ?? null, error: payload.error }
   } catch (error) {
@@ -54,7 +51,7 @@ export async function fetchNsAccountDashboardData(
 ): Promise<NsResult<AccountDetail>> {
   try {
     const response = await fetch(
-      `${API_BASE}/api/dashboard/ns/account/${accountId}${buildContextQuery(archiveContext)}`,
+      `${API_BASE}/dashboard/ns/account/${accountId}${buildContextQuery(archiveContext)}`,
     )
     const payload = (await response.json()) as NsResponse<AccountDetail | null>
     return { data: payload.data, source: payload.source, context: payload.context ?? null, error: payload.error }
@@ -66,7 +63,7 @@ export async function fetchNsAccountDashboardData(
 /** Always LIVE: populates the account search/dropdown widget from account_mapping.json. */
 export async function fetchAccountMapping(): Promise<AccountMappingEntry[]> {
   try {
-    const response = await fetch(`${API_BASE}/api/dashboard/ns/account-mapping`)
+    const response = await fetch(`${API_BASE}/dashboard/ns/account-mapping`)
     if (!response.ok) {
       return []
     }

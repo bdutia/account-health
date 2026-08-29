@@ -1,0 +1,127 @@
+{
+  "summaryMetrics": [
+  {
+    "id": "health-score",
+    "title": "Health Score Avg",
+    "value": "80",
+    "subtitle": "Watch",
+    "tone": "watch"
+  },
+  {
+    "id": "renewal-risk",
+    "title": "Renewal Risk",
+    "value": "80",
+    "subtitle": "Accounts At Risk",
+    "tone": "risk"
+  },
+  {
+    "id": "expansion",
+    "title": "Expansion Potential",
+    "value": "80",
+    "subtitle": "Growth Opportunities",
+    "tone": "healthy"
+  },
+  {
+    "id": "maturity",
+    "title": "Technical Maturity",
+    "value": "Intermediate",
+    "subtitle": "Current Level",
+    "tone": "neutral"
+  },
+  {
+    "id": "delivery",
+    "title": "Delivery Health",
+    "value": "80%",
+    "subtitle": "On Track",
+    "tone": "healthy"
+  },
+  {
+    "id": "exec",
+    "title": "Exec Attention Needed",
+    "value": "4",
+    "subtitle": "High Priority Accounts",
+    "tone": "watch"
+  }
+],
+"accounts": [
+  {
+    "accountId": "test_account_directory",
+    "name": "test_account_directory",
+    "healthScore": { "value": 80, "tone": "watch" },
+    "renewalRisk": "High Risk",
+    "expansionPotential": "Expansion Pipeline",
+    "technicalMaturity": "Intermediate",
+    "deliveryHealth": "On Track",
+    "execAttention": "Exec Review"
+  },
+  {
+    "accountId": "deloitte-tohoku",
+    "name": "deloitte-tohoku",
+    "healthScore": { "value": 80, "tone": "risk" },
+    "renewalRisk": "At Risk",
+    "expansionPotential": "Limited",
+    "technicalMaturity": "Foundational",
+    "deliveryHealth": "At Risk",
+    "execAttention": "Upsell Opportunity"
+  },
+  {
+    "accountId": "delta-airlines",
+    "name": "Delta Airlines",
+    "healthScore": { "value": 85, "tone": "healthy" },
+    "renewalRisk": "Healthy",
+    "expansionPotential": "Growth Potential",
+    "technicalMaturity": "Advanced",
+    "deliveryHealth": "On Track",
+    "execAttention": "-"
+  },
+  {
+    "accountId": "stellantis",
+    "name": "Stellantis",
+    "healthScore": { "value": 54, "tone": "risk" },
+    "renewalRisk": "At Risk",
+    "expansionPotential": "Whitespace",
+    "technicalMaturity": "Intermediate",
+    "deliveryHealth": "Off Track",
+    "execAttention": "Escalation Needed"
+  },
+  {
+    "accountId": "grover_account",
+    "name": "Grover Account",
+    "healthScore": { "value": 80, "tone": "watch" },
+    "renewalRisk": "Healthy",
+    "expansionPotential": "Expansion Potential",
+    "technicalMaturity": "Optimized",
+    "deliveryHealth": "On Track",
+    "execAttention": "Strategic Push"
+  }
+],
+"summaryPanels": [
+  {
+    "id": "renewals",
+    "title": "Renewals & Expansion",
+    "items": [
+      { "id": "r1", "label": "Upcoming Renewals", "value": "5 in next 60 days", "tone": "watch" },
+      { "id": "r2", "label": "Expansion Pipeline", "value": "$1.2M potential upsell", "tone": "healthy" },
+      { "id": "r3", "label": "Whitespace Analysis", "value": "42% untapped potential", "tone": "neutral" }
+    ]
+  },
+  {
+    "id": "delivery",
+    "title": "Technical & Delivery Health",
+    "items": [
+      { "id": "d1", "label": "Feature Adoption", "value": "68% feature utilization", "tone": "watch" },
+      { "id": "d2", "label": "Open Support Issues", "value": "7 active tickets", "tone": "risk" },
+      { "id": "d3", "label": "Project Status", "value": "2 delays in implementation", "tone": "watch" }
+    ]
+  },
+  {
+    "id": "opps",
+    "title": "Key Opportunities & Risks",
+    "items": [
+      { "id": "o1", "label": "Growth Opportunity", "value": "Target security upgrade", "tone": "healthy" },
+      { "id": "o2", "label": "At Risk Alert", "value": "Renewal at risk for Beta Industries", "tone": "risk" },
+      { "id": "o3", "label": "Action Needed", "value": "Schedule executive review", "tone": "watch" }
+    ]
+  }
+]
+}

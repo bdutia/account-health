@@ -1,7 +1,7 @@
 {
-  "acme-corp": {
-    "accountName": "Deloitte Tohmatsu India Private Limited",
-    "accountId": "1-2TRO2",
+  "test_account_directory": {
+    "accountName": "test_account_directory",
+    "accountId": "test_account_directory",
     "csvAccountDir": "test-account-dir"
   },
   "deloitte-tohoku": {
@@ -18,5 +18,57 @@
     "accountName": "stellantis",
     "accountId": "stellantis",
     "csvAccountDir": "stellantis"
+  },
+  "Expedia Inc_Direct Customer": {
+    "accountName": "Expedia Inc_Direct Customer",
+    "accountId": "Expedia Inc_Direct Customer",
+    "csvAccountDir": "expedia",
+    "input_name": "Expedia Direct customer",
+    "account_name": "Expedia Inc_Direct Customer",
+    "account_switch_key": "1-40SFN:1-2RBL",
+    "match_status": "matched",
+    "search_term_used": "Expedia",
+    "candidates": [
+      {
+        "account_name": "Expedia Inc_Direct Customer",
+        "account_switch_key": "1-40SFN:1-2RBL"
+      }
+    ]
+  },
+  "Deloitte Tohmatsu Cyber LLC_Indirect Customer": {
+    "accountName": "Deloitte Tohmatsu Cyber LLC_Indirect Customer",
+    "accountId": "deloitte-tohoku",
+    "csvAccountDir": "deloitte-tohoku",
+    "input_name": "deloitte tohmatsu direct custmer",
+    "account_name": "Deloitte Tohmatsu Cyber LLC_Indirect Customer",
+    "account_switch_key": "F-AC-4918280:1-5G3LB",
+    "match_status": "matched",
+    "search_term_used": "deloitte tohmatsu",
+    "candidates": [
+      {
+        "account_name": "Deloitte Tohmatsu Cyber LLC_Indirect Customer",
+        "account_switch_key": "F-AC-4918280:1-5G3LB"
+      }
+    ]
+  },
+  "QVC, Inc._Direct Customer": {
+    "accountName": "QVC, Inc._Direct Customer",
+    "accountId": "QVC, Inc._Direct Customer",
+    "csvAccountDir": "qvc",
+    "input_name": "qvc direct customer",
+    "account_name": "QVC, Inc._Direct Customer",
+    "account_switch_key": "1-5VBNB5:1-2RBL",
+    "match_status": "ambiguous",
+    "search_term_used": "qvc",
+    "candidates": [
+      {
+        "account_name": "QVC, Inc._Indirect Customer",
+        "account_switch_key": "1-5VBNB5:1-5G3LB"
+      },
+      {
+        "account_name": "QVC, Inc._Direct Customer",
+        "account_switch_key": "1-5VBNB5:1-2RBL"
+      }
+    ]
   }
 }

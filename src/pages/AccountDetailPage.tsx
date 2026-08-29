@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { DashboardLayout } from '../components/DashboardLayout'
 import { HealthWidgetLink } from '../components/HealthWidgetLink'
 import { MetricTiles } from '../components/MetricTiles'
 import { toneDotStyles, toneTextStyles } from '../components/tone'
 import { fetchAccountDashboardData, fetchAccountHostnameCoverage } from '../services/googleData'
+import { fetchNsAccountDashboardData } from '../services/netstorageData'
 import type { AccountDetail, AccountHostnameCoverage } from '../types/dashboard'
 
 function hostnameStatusStyles(status: 'covered' | 'not_covered' | 'unknown'): string {
@@ -19,20 +20,41 @@ function hostnameStatusStyles(status: 'covered' | 'not_covered' | 'unknown'): st
 
 export function AccountDetailPage() {
   const { accountId = '' } = useParams()
+  const [searchParams] = useSearchParams()
+  const archive = searchParams.get('archive') ?? ''
   const [account, setAccount] = useState<AccountDetail | null>(null)
   const [hostnameCoverage, setHostnameCoverage] = useState<AccountHostnameCoverage | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [dataSourceLabel, setDataSourceLabel] = useState<string | null>(null)
 
   useEffect(() => {
     let isMounted = true
 
     async function loadData() {
-      const [next, coverage] = await Promise.all([
-        fetchAccountDashboardData(accountId),
+      setIsLoading(true)
+      const [nsResult, coverage] = await Promise.all([
+        fetchNsAccountDashboardData(accountId, archive || undefined),
         fetchAccountHostnameCoverage(accountId),
       ])
+
+      if (!isMounted) {
+        return
+      }
+
+      if (nsResult.data) {
+        setAccount(nsResult.data)
+        setDataSourceLabel(
+          nsResult.source === 'netstorage-archive' ? `NetStorage Archive (${nsResult.context})` : 'NetStorage Live',
+        )
+        setHostnameCoverage(coverage)
+        setIsLoading(false)
+        return
+      }
+
+      const fallbackAccount = await fetchAccountDashboardData(accountId)
       if (isMounted) {
-        setAccount(next ?? null)
+        setAccount(fallbackAccount ?? null)
+        setDataSourceLabel(nsResult.error ? `Fallback data — NetStorage unavailable (${nsResult.error})` : null)
         setHostnameCoverage(coverage)
         setIsLoading(false)
       }
@@ -43,7 +65,8 @@ export function AccountDetailPage() {
     return () => {
       isMounted = false
     }
-  }, [accountId])
+  }, [accountId, archive])
+
 
   if (isLoading) {
     return (
@@ -71,6 +94,9 @@ export function AccountDetailPage() {
   return (
     <DashboardLayout title={account.name} owner={account.owner}>
       <div className="space-y-6">
+        {dataSourceLabel ? (
+          <p className="text-center text-xs font-semibold text-slate-500">Data source: {dataSourceLabel}</p>
+        ) : null}
         <MetricTiles metrics={account.heroMetrics} />
         <section className="grid gap-4 lg:grid-cols-2">
           <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-card">

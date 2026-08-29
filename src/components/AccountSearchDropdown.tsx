@@ -6,9 +6,9 @@ interface AccountSearchDropdownProps {
   archive?: string
 }
 
-function buildAccountUrl(accountName: string, archive?: string): string {
+function buildAccountUrl(csvAccountDir: string, archive?: string): string {
   const base = import.meta.env.BASE_URL.replace(/\/$/, '')
-  const path = `${base}/account/${encodeURIComponent(accountName)}`
+  const path = `${base}/account/${encodeURIComponent(csvAccountDir)}`
   return archive ? `${path}?archive=${encodeURIComponent(archive)}` : path
 }
 
@@ -35,9 +35,9 @@ export function AccountSearchDropdown({ accounts, archive }: AccountSearchDropdo
     return accounts.filter((account) => account.accountName.toLowerCase().includes(normalizedQuery))
   }, [accounts, query])
 
-  function navigateToAccount(accountName: string) {
+  function navigateToAccount(csvAccountDir: string) {
     // Full page reload, as the account detail page loads its own fresh NetStorage-backed dataset.
-    window.location.href = buildAccountUrl(accountName, archive)
+    window.location.href = buildAccountUrl(csvAccountDir, archive)
   }
 
   return (
@@ -54,7 +54,7 @@ export function AccountSearchDropdown({ accounts, archive }: AccountSearchDropdo
           onFocus={() => setIsOpen(true)}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && filteredAccounts.length === 1) {
-              navigateToAccount(filteredAccounts[0].accountName)
+              navigateToAccount(filteredAccounts[0].csvAccountDir)
             }
           }}
         />
@@ -75,7 +75,7 @@ export function AccountSearchDropdown({ accounts, archive }: AccountSearchDropdo
               <button
                 type="button"
                 className="block w-full px-4 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-sky-50 hover:text-sky-700"
-                onClick={() => navigateToAccount(account.accountName)}
+                onClick={() => navigateToAccount(account.csvAccountDir)}
               >
                 {account.accountName}
               </button>

@@ -40,7 +40,31 @@ def get_storage_dir() -> Path:
     return path
 
 
-def load_account_id_map() -> dict[str, dict[str, str]]:
+def _index_account_mapping_by_csv_dir(payload: dict[str, Any]) -> dict[str, dict[str, str]]:
+    """Re-key a raw account-mapping JSON payload by csvAccountDir, the identifier used in account
+    URLs and in every per-account NetStorage report path (matrix CSVs, etc.)."""
+    indexed: dict[str, dict[str, str]] = {}
+    for key, value in payload.items():
+        if isinstance(value, str):
+            indexed[key] = {"accountName": key, "accountId": value, "csvAccountDir": key}
+            continue
+
+        if isinstance(value, dict):
+            account_id = value.get("accountId") or value.get("account_id")
+            account_name = value.get("accountName") or value.get("account_name") or key
+            csv_account_dir = value.get("csvAccountDir") or value.get("csv_account_dir") or key
+            if isinstance(account_id, str) and account_id.strip():
+                indexed[str(csv_account_dir)] = {
+                    "accountName": str(account_name),
+                    "accountId": account_id.strip(),
+                    "csvAccountDir": str(csv_account_dir),
+                }
+
+    return indexed
+
+
+def _load_local_account_id_map() -> dict[str, dict[str, str]]:
+    """Fallback account map read from the local backend/account_id_map.json, re-keyed by csvAccountDir."""
     cfg = get_akamai_config()
     path = _resolve_backend_path(cfg["account_map_path"])
     if not path.exists():
@@ -50,27 +74,43 @@ def load_account_id_map() -> dict[str, dict[str, str]]:
     if not isinstance(payload, dict):
         raise ValueError("Akamai account map must be a JSON object")
 
-    normalized: dict[str, dict[str, str]] = {}
-    for key, value in payload.items():
-        if isinstance(value, str):
-            normalized[key] = {"accountName": key, "accountId": value, "csvAccountDir": key}
-            continue
-
-        if isinstance(value, dict):
-            account_id = value.get("accountId") or value.get("account_id")
-            account_name = value.get("accountName") or value.get("account_name") or key
-            csv_account_dir = value.get("csvAccountDir") or value.get("csv_account_dir") or key
-            if isinstance(account_id, str) and account_id.strip():
-                normalized[key] = {
-                    "accountName": str(account_name),
-                    "accountId": account_id.strip(),
-                    "csvAccountDir": str(csv_account_dir),
-                }
-
-    if not normalized:
+    indexed = _index_account_mapping_by_csv_dir(payload)
+    if not indexed:
         raise ValueError("Akamai account map has no valid entries")
 
-    return normalized
+    return indexed
+
+
+_ACCOUNT_MAPPING_CACHE: dict[str, Any] = {"data": None, "loaded_at": 0.0}
+_ACCOUNT_MAPPING_CACHE_TTL_SECONDS = 30
+
+
+def load_account_id_map() -> dict[str, dict[str, str]]:
+    """Universal account map keyed by csvAccountDir, used to validate account presence and to
+    resolve per-account NetStorage report paths.
+
+    Tries the LIVE NetStorage account_mapping.json (NSCPCODE/staticSiteContent/allAccounts/
+    account_mapping.json) first, and only falls back to the local backend/account_id_map.json if
+    that remote fetch fails or yields no valid entries. Results are cached briefly to avoid
+    re-downloading the mapping file multiple times within the same request."""
+    now = time.time()
+    cached = _ACCOUNT_MAPPING_CACHE["data"]
+    if cached is not None and (now - _ACCOUNT_MAPPING_CACHE["loaded_at"]) < _ACCOUNT_MAPPING_CACHE_TTL_SECONDS:
+        return cached
+
+    try:
+        payload = download_ns_json(ACCOUNT_MAPPING_RELATIVE_PATH, None)
+        if not isinstance(payload, dict):
+            raise ValueError("NetStorage account_mapping.json must be a JSON object")
+        indexed = _index_account_mapping_by_csv_dir(payload)
+        if not indexed:
+            raise ValueError("NetStorage account_mapping.json has no valid entries")
+    except Exception:
+        indexed = _load_local_account_id_map()
+
+    _ACCOUNT_MAPPING_CACHE["data"] = indexed
+    _ACCOUNT_MAPPING_CACHE["loaded_at"] = now
+    return indexed
 
 
 def create_akamai_session() -> tuple[requests.Session, str]:
@@ -920,15 +960,15 @@ def get_ns_account_mapping() -> dict[str, Any]:
 
 
 def get_ns_account_dashboard_data(account_key: str, context: str | None = None) -> dict[str, Any]:
-    """Fetch account_<accountName>_summary.json from NetStorage: LIVE by default, or from the given archive context."""
+    """Fetch account_<csvAccountDir>_summary.json from NetStorage: LIVE by default, or from the given archive context."""
     normalized_context = context.strip() if is_archive_context(context) else None
     try:
         mapping = load_account_id_map()
         account_metadata = mapping.get(account_key)
         if not account_metadata:
             raise ValueError(f"No mapping found for account key: {account_key}")
-        account_name = account_metadata.get("accountName") or account_key
-        relative_path = Path(account_name) / f"account_{account_name}_summary.json"
+        csv_account_dir = account_metadata.get("csvAccountDir") or account_key
+        relative_path = Path(csv_account_dir) / f"account_{csv_account_dir}_summary.json"
         data = download_ns_json(relative_path, normalized_context)
         return {
             "source": "netstorage-archive" if normalized_context else "netstorage-live",

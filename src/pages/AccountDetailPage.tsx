@@ -142,7 +142,7 @@ export function AccountDetailPage() {
         </section>
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-card">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-xl font-bold text-slate-800">Akamai Hostname Coverage</h2>
+            <h2 className="text-xl font-bold text-slate-800">Account Health Diagnosis & Surgical Tool Box</h2>
             {hostnameCoverage ? (
               <div className="flex flex-wrap gap-2 text-xs font-semibold text-slate-700">
                 <span className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-700">

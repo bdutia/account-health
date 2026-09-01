@@ -2255,6 +2255,139 @@ def get_account_wsa_alert_matrix_scorecard(
     }
 
 
+# ----------------------------------------------------------------------------
+# securityFeatureCharts: single-endpoint call to the Grover security-trends API for
+# an interactive date range + account name, returning multi-dimension time-series
+# JSON for the front-end line chart widget.
+# ----------------------------------------------------------------------------
+
+GROVER_SECURITY_TRENDS_URL = "https://api.grover.akamai.com/security-trends/query-account-data"
+
+# Common date/label field names seen across trend-style APIs; used to detect the x-axis field.
+_SECURITY_TREND_DATE_KEYS = ("date", "day", "timestamp", "period", "ts", "eventDate", "recordDate")
+
+
+def get_grover_api_key() -> str:
+    return os.getenv("X_API_KEY", "")
+
+
+@sleep_and_retry
+@limits(calls=int(os.getenv("GROVER_RATE_LIMIT_CALLS") or 30), period=60)
+def fetch_grover_security_trends(
+    session: requests.Session, start_date: str, end_date: str, account_name: str, api_key: str
+) -> requests.Response:
+    """POST the security-trends query to the Grover API for a date range + account name."""
+    headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
+    payload = {"start_date": start_date, "end_date": end_date, "account_name": account_name}
+    return session.post(GROVER_SECURITY_TRENDS_URL, headers=headers, json=payload, timeout=30)
+
+
+def _coerce_security_trend_value(value: Any) -> float | None:
+    """Grover metrics may arrive as numbers or numeric strings; normalize both (never assume typing)."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def extract_security_trend_series(payload: Any) -> tuple[dict[str, list[dict[str, Any]]], list[str]]:
+    """Normalize the Grover API response into per-dimension time series for the line chart widget.
+
+    Handles a flat list of {date, metricA, metricB, ...} records, or a payload wrapping that list in a
+    top-level "data"/"results"/"records"/"trends"/"series" key. Returns ({}, []) for unrecognized shapes;
+    the raw payload is still returned to the caller so the UI can fall back to a raw JSON view."""
+    records: list[dict[str, Any]] = []
+    if isinstance(payload, list):
+        records = [item for item in payload if isinstance(item, dict)]
+    elif isinstance(payload, dict):
+        for key in ("data", "results", "records", "trends", "series"):
+            candidate = payload.get(key)
+            if isinstance(candidate, list):
+                records = [item for item in candidate if isinstance(item, dict)]
+                break
+
+    if not records:
+        return {}, []
+
+    date_key = next((key for key in _SECURITY_TREND_DATE_KEYS if key in records[0]), None)
+    metric_keys = [
+        key for key in records[0].keys() if key != date_key and _coerce_security_trend_value(records[0].get(key)) is not None
+    ]
+
+    series: dict[str, list[dict[str, Any]]] = {key: [] for key in metric_keys}
+    for index, record in enumerate(records):
+        label = str(record.get(date_key)) if date_key else str(index)
+        for metric_key in metric_keys:
+            series[metric_key].append({"date": label, "value": _coerce_security_trend_value(record.get(metric_key))})
+
+    return series, metric_keys
+
+
+def get_account_security_feature_charts(
+    account_key: str, start_date: str, end_date: str, account_name: str, job: Job
+) -> dict[str, Any]:
+    """Fetch security trend chart data (multi-dimension time series) from the Grover API for one account/date range."""
+    job.log(f"Looking up account mapping for '{account_key}'...", percent=5)
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key) or {}
+    resolved_account_name = account_name.strip() or account_metadata.get("accountName", account_key)
+
+    api_key = get_grover_api_key()
+    if not api_key:
+        job.log(
+            "X_API_KEY is not set in .env.server; the Grover API call will likely fail authentication",
+            level="warning",
+            percent=10,
+        )
+
+    job.log(
+        f"Querying Grover security-trends API for '{resolved_account_name}' ({start_date} \u2192 {end_date})...",
+        percent=20,
+    )
+
+    session = requests.Session()
+    try:
+        response = fetch_grover_security_trends(session, start_date, end_date, resolved_account_name, api_key)
+    except requests.exceptions.RequestException as error:
+        message = f"Grover API request failed: {error}"
+        job.log(message, level="error", percent=40)
+        raise RuntimeError(message) from error
+
+    job.log(f"Grover API responded with status {response.status_code}", percent=70)
+
+    if response.status_code != 200:
+        message = f"Grover API error {response.status_code}: {response.text[:500]}"
+        job.log(message, level="error", percent=80)
+        raise RuntimeError(message)
+
+    try:
+        payload = response.json()
+    except ValueError as error:
+        message = f"Grover API returned invalid JSON: {error}"
+        job.log(message, level="error", percent=80)
+        raise RuntimeError(message) from error
+
+    job.log("Parsing security trend series...", percent=85)
+    series, dimensions = extract_security_trend_series(payload)
+    if not dimensions:
+        job.log("No numeric time-series dimensions recognized in the response; showing raw JSON only", level="warning", percent=90)
+
+    job.log("Security feature charts ready", level="success", percent=100)
+
+    return {
+        "accountKey": account_key,
+        "accountName": resolved_account_name,
+        "accountId": account_metadata.get("accountId", ""),
+        "startDate": start_date,
+        "endDate": end_date,
+        "dimensions": dimensions,
+        "series": series,
+        "raw": payload,
+    }
+
+
 def parse_private_key(raw: str | None) -> str | None:
     if not raw:
         return None

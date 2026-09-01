@@ -11,6 +11,7 @@ import { PerfMatrixTopNSummaryPage } from './pages/PerfMatrixTopNSummaryPage'
 import { SecHostCoverageMatrixPage } from './pages/SecHostCoverageMatrixPage'
 import { SecHostCoverageMatrixScoreCardPage } from './pages/SecHostCoverageMatrixScoreCardPage'
 import { SecHostCoverageMatrixSummaryPage } from './pages/SecHostCoverageMatrixSummaryPage'
+import { SecurityFeatureChartsPage } from './pages/SecurityFeatureChartsPage'
 import { SummaryPage } from './pages/SummaryPage'
 import { TrafficMatrixPage } from './pages/TrafficMatrixPage'
 import { TrafficMatrixScoreCardPage } from './pages/TrafficMatrixScoreCardPage'
@@ -50,6 +51,7 @@ function App() {
         <Route path="/account/:accountId/wsaAlertMatrix/scoreCard" element={<WsaAlertMatrixScoreCardPage />} />
         <Route path="/account/:accountId/wsaAlertMatrix/:configOrFeature" element={<WsaAlertMatrixPage />} />
         <Route path="/account/:accountId/wsaAlertMatrix" element={<WsaAlertMatrixPage />} />
+        <Route path="/account/:accountId/securityFeatureCharts" element={<SecurityFeatureChartsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

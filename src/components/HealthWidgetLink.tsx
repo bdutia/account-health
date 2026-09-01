@@ -1,6 +1,13 @@
 import { Link } from 'react-router-dom'
 
-export type HealthAnimationVariant = 'pulseMonitor' | 'heartbeat' | 'dnaHelix' | 'stethoscope' | 'securityPulse' | 'securityAlert'
+export type HealthAnimationVariant =
+  | 'pulseMonitor'
+  | 'heartbeat'
+  | 'dnaHelix'
+  | 'stethoscope'
+  | 'securityPulse'
+  | 'securityAlert'
+  | 'chartPulse'
 
 interface HealthWidgetLinkProps {
   to: string
@@ -46,11 +53,21 @@ const ACCENTS: Record<HealthAnimationVariant, { border: string; chipBg: string; 
     chipBorder: 'border-red-200',
     text: 'text-red-700',
   },
+  chartPulse: {
+    border: 'hover:border-violet-300',
+    chipBg: 'bg-violet-50',
+    chipBorder: 'border-violet-200',
+    text: 'text-violet-700',
+  },
 }
 
 function AnimationChip({ variant }: { variant: HealthAnimationVariant }) {
   if (variant === 'securityAlert') {
     return <SecurityAlertChip />
+  }
+
+  if (variant === 'chartPulse') {
+    return <ChartPulseChip />
   }
 
   if (variant === 'pulseMonitor') {
@@ -118,6 +135,22 @@ function AnimationChip({ variant }: { variant: HealthAnimationVariant }) {
         <path d="M12 2 4 5v6c0 5 3.4 9 8 11 4.6-2 8-6 8-11V5l-8-3z" />
       </svg>
     </div>
+  )
+}
+
+function ChartPulseChip() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-7 w-7 text-violet-600" fill="none" stroke="currentColor" strokeWidth={2}>
+      <path d="M3 3v18h18" strokeLinecap="round" strokeLinejoin="round" />
+      <polyline
+        points="5,15 9,10 13,13 19,5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="animate-health-pulse-line"
+        strokeDasharray={40}
+      />
+      <circle cx="19" cy="5" r="1.6" className="fill-violet-500 animate-health-pulse-dot" />
+    </svg>
   )
 }
 

@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from backend.data_service import (
     get_account_hostname_coverage,
@@ -27,6 +28,7 @@ from backend.data_service import (
     get_account_wsa_alert_matrix,
     get_account_wsa_alert_matrix_summary,
     get_account_wsa_alert_matrix_scorecard,
+    get_account_security_feature_charts,
     get_account_dashboard_data,
     get_summary_dashboard_data,
     get_summary_dashboard_debug,
@@ -582,6 +584,34 @@ def wsa_alert_matrix_scorecard_json(
 @app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/wsaAlertMatrix/download')
 def download_wsa_alert_matrix_csv(account_key: str, context: str | None = Query(None)) -> FileResponse:
     return _download_report_csv(account_key, WSA_ALERT_RELATIVE_PATH, context)
+
+
+class SecurityFeatureChartsRequest(BaseModel):
+    start_date: str
+    end_date: str
+    account_name: str
+
+
+@app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/securityFeatureCharts/jobs')
+def start_security_feature_charts_job(
+    account_key: str, request: SecurityFeatureChartsRequest
+) -> dict[str, object]:
+    job = job_manager.create()
+    job_manager.run_in_background(
+        job,
+        lambda active_job: get_account_security_feature_charts(
+            account_key, request.start_date, request.end_date, request.account_name, active_job
+        ),
+    )
+    return {'jobId': job.job_id}
+
+
+@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/securityFeatureCharts/jobs/{{job_id}}/events')
+def stream_security_feature_charts_job(account_key: str, job_id: str) -> StreamingResponse:
+    job = job_manager.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail='Job not found')
+    return _job_event_stream(job)
 
 
 DIST_DIR = Path(__file__).resolve().parent.parent / 'dist'

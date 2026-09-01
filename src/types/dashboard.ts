@@ -461,6 +461,29 @@ export interface PerfMatrixTopNScoreCardResult {
   hostnames: PerfMatrixScoreCardHostnameEntry[]
 }
 
+// --- securityFeatureCharts ---
+
+export interface SecurityTrendSeriesPoint {
+  date: string
+  value: number | null
+}
+
+export interface SecurityFeatureChartsResult {
+  accountKey: string
+  accountName: string
+  accountId: string
+  startDate: string
+  endDate: string
+  dimensions: string[]
+  series: Record<string, SecurityTrendSeriesPoint[]>
+  raw: unknown
+}
+
+export type SecurityFeatureChartsJobProgressEvent =
+  | { type: 'progress'; message: string; level: JobProgressLevel; percent: number; timestamp: number }
+  | { type: 'completed'; percent: number; result: SecurityFeatureChartsResult; timestamp: number }
+  | { type: 'failed'; message: string; timestamp: number }
+
 // --- wsaAlertMatrix ---
 
 export interface WsaAlertMatrixTotals {

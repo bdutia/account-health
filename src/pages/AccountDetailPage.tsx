@@ -311,6 +311,20 @@ export function AccountDetailPage() {
                 />
               </div>
             </div>
+
+            <div>
+              <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-violet-700">
+                Security Feature Charts — Trend Analytics
+              </h3>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                <HealthWidgetLink
+                  variant="chartPulse"
+                  to={`/account/${accountId}/securityFeatureCharts`}
+                  title="Security Feature Charts"
+                  description="Interactive Security Trend Line Charts"
+                />
+              </div>
+            </div>
           </div>
 
           {!hostnameCoverage ? (

@@ -1635,6 +1635,10 @@ def get_crux_config() -> dict[str, str]:
     return {"api_key": os.getenv("CRUX_API_KEY", "")}
 
 
+def get_grover_config() -> dict[str, str]:
+    return {"api_key": os.getenv("X_API_KEY", "")}
+
+
 def classify_cwv(metric_key: str, value: float | None) -> str | None:
     if value is None:
         return None
@@ -2268,7 +2272,7 @@ _SECURITY_TREND_DATE_KEYS = ("date", "day", "timestamp", "period", "ts", "eventD
 
 
 def get_grover_api_key() -> str:
-    return os.getenv("X_API_KEY", "")
+    return get_grover_config()["api_key"]
 
 
 @sleep_and_retry

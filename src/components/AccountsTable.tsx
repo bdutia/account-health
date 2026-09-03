@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { toneBadgeStyles, toneTextStyles } from './tone'
 import type { AccountSummaryRow, HealthTone } from '../types/dashboard'
@@ -8,6 +8,7 @@ interface AccountsTableProps {
 }
 
 const RANDOM_PREVIEW_COUNT = 5
+const SEARCH_SUGGESTION_LIMIT = 8
 
 interface FilterColumnDef {
   key: string
@@ -50,6 +51,18 @@ export function AccountsTable({ rows }: AccountsTableProps) {
   const [nameQuery, setNameQuery] = useState('')
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({})
   const [openFilterColumn, setOpenFilterColumn] = useState<string | null>(null)
+  const [isSearchOpen, setIsSearchOpen] = useState(false)
+  const searchContainerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(event.target as Node)) {
+        setIsSearchOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   // Stable per data-load random preview; only reshuffles when the underlying rows change (e.g. new archive selected).
   const randomPreviewRows = useMemo(() => sampleRandomRows(rows, RANDOM_PREVIEW_COUNT), [rows])
@@ -87,6 +100,14 @@ export function AccountsTable({ rows }: AccountsTableProps) {
 
   const visibleRows = hasActiveFilters ? filteredRows : randomPreviewRows
 
+  const searchSuggestions = useMemo(() => {
+    const query = nameQuery.trim().toLowerCase()
+    if (!query) {
+      return []
+    }
+    return rows.filter((row) => row.name.toLowerCase().includes(query)).slice(0, SEARCH_SUGGESTION_LIMIT)
+  }, [rows, nameQuery])
+
   function toggleColumnFilterValue(columnKey: string, value: string) {
     setColumnFilters((previous) => {
       const allValues = columnValueOptions[columnKey] ?? []
@@ -114,12 +135,39 @@ export function AccountsTable({ rows }: AccountsTableProps) {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-2xl font-bold tracking-tight text-slate-800">Account Overview</h2>
         <div className="flex flex-wrap items-center gap-3">
-          <input
-            className="w-64 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-normal"
-            placeholder="Search accounts by name..."
-            value={nameQuery}
-            onChange={(event) => setNameQuery(event.target.value)}
-          />
+          <div ref={searchContainerRef} className="relative">
+            <input
+              className="w-64 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-normal"
+              placeholder="Search or select an account..."
+              value={nameQuery}
+              onFocus={() => setIsSearchOpen(true)}
+              onChange={(event) => {
+                setNameQuery(event.target.value)
+                setIsSearchOpen(true)
+              }}
+            />
+            {isSearchOpen && nameQuery.trim() ? (
+              <div className="absolute left-0 top-full z-30 mt-1 max-h-72 w-80 overflow-y-auto rounded-lg border border-slate-300 bg-white py-1 text-sm shadow-lg">
+                {searchSuggestions.length === 0 ? (
+                  <p className="px-3 py-2 text-slate-500">No accounts found.</p>
+                ) : (
+                  searchSuggestions.map((row) => (
+                    <Link
+                      key={row.accountId}
+                      to={`/account/${row.accountId}`}
+                      onClick={() => setIsSearchOpen(false)}
+                      className="flex items-center justify-between gap-2 px-3 py-2 hover:bg-sky-50"
+                    >
+                      <span className="truncate font-semibold text-slate-800">{row.name}</span>
+                      <span className={`shrink-0 rounded-full border px-2 py-0.5 text-xs font-semibold ${toneBadgeStyles[row.healthScore.tone]}`}>
+                        {row.healthScore.value}
+                      </span>
+                    </Link>
+                  ))
+                )}
+              </div>
+            ) : null}
+          </div>
           {hasActiveFilters ? (
             <button
               type="button"

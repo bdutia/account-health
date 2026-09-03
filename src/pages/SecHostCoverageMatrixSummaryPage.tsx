@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { DashboardLayout } from '../components/DashboardLayout'
+import { useArchive } from '../context/ArchiveContext'
 import {
   runSecHostCoverageMatrixSummaryJob,
   getSecHostCoverageMatrixDownloadUrl,
@@ -30,9 +31,8 @@ const LOG_LEVEL_STYLES: Record<JobProgressLevel, string> = {
 
 export function SecHostCoverageMatrixSummaryPage() {
   const { accountId = '' } = useParams()
-  const [searchParams] = useSearchParams()
   const dataMode: CsvDataMode = 'csv_data_remote'
-  const [context, setContext] = useState(searchParams.get('context') ?? '')
+  const { archive: context, contextPath } = useArchive()
   const [status, setStatus] = useState<JobStatus>('idle')
   const [percent, setPercent] = useState(0)
   const [logs, setLogs] = useState<LogEntry[]>([])
@@ -134,15 +134,15 @@ export function SecHostCoverageMatrixSummaryPage() {
               <span className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-semibold text-slate-700">
                 Data Source: Remote (NetStorage)
               </span>
-              <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+              <span className="flex items-center gap-2 text-sm font-semibold text-slate-700">
                 Context (NS base path):
-                <input
-                  className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-normal"
-                  placeholder="e.g. staticSiteContent"
-                  value={context}
-                  onChange={(event) => setContext(event.target.value)}
-                />
-              </label>
+                <span
+                  className="rounded-lg border border-slate-300 bg-slate-100 px-3 py-1.5 text-sm font-normal text-slate-600"
+                  title="Inherited from the Archive(s) selection above"
+                >
+                  {contextPath}
+                </span>
+              </span>
               <span className="text-sm font-semibold text-slate-600">
                 {status === 'running' ? `Running… ${percent}%` : status === 'completed' ? 'Completed' : status === 'failed' ? 'Failed' : ''}
               </span>

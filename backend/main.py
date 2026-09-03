@@ -34,6 +34,7 @@ from backend.data_service import (
     get_summary_dashboard_debug,
     get_ns_account_dashboard_data,
     get_ns_account_mapping,
+    get_ns_archive_list,
     get_ns_summary_dashboard_data,
     resolve_report_csv_path,
     CONFIG_SUMMARY_RELATIVE_PATH,
@@ -92,6 +93,13 @@ def ns_summary_dashboard(context: str | None = Query(None)) -> dict[str, object]
 def ns_account_mapping() -> dict[str, object]:
     """Always LIVE: NSCPCODE/staticSiteContent/allAccounts/account_mapping.json, used for the account search widget."""
     return get_ns_account_mapping()
+
+
+@app.get(f'{API_PREFIX}/dashboard/ns/archives')
+def ns_archives() -> dict[str, object]:
+    """Always LIVE: lists archive/<date> folders under NSCPCODE/archive via NetStorage stat, used to populate
+    the archive(s) dropdown/search widget."""
+    return get_ns_archive_list()
 
 
 @app.get(f'{API_PREFIX}/dashboard/ns/account/{{account_key}}')

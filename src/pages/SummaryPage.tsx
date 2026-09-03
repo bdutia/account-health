@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
 import { AccountSearchDropdown } from '../components/AccountSearchDropdown'
 import { AccountsTable } from '../components/AccountsTable'
 import { DashboardLayout } from '../components/DashboardLayout'
 import { MetricTiles } from '../components/MetricTiles'
 import { PanelColumns } from '../components/PanelColumns'
+import { useArchive } from '../context/ArchiveContext'
 import { fetchSummaryDashboardData } from '../services/googleData'
 import { fetchAccountMapping, fetchNsSummaryDashboardData } from '../services/netstorageData'
 import { accounts as mockAccounts, summaryMetrics as mockSummaryMetrics, summaryPanels as mockSummaryPanels } from '../data/mockData'
@@ -17,8 +17,7 @@ const INITIAL_DATA: SummaryDashboardData = {
 }
 
 export function SummaryPage() {
-  const [searchParams] = useSearchParams()
-  const archive = searchParams.get('archive') ?? ''
+  const { archive } = useArchive()
   const [data, setData] = useState<SummaryDashboardData>(INITIAL_DATA)
   const [isLoading, setIsLoading] = useState(true)
   const [dataSourceLabel, setDataSourceLabel] = useState<string | null>(null)

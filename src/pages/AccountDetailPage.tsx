@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { DashboardLayout } from '../components/DashboardLayout'
 import { HealthWidgetLink } from '../components/HealthWidgetLink'
 import { MetricTiles } from '../components/MetricTiles'
 import { toneDotStyles, toneTextStyles } from '../components/tone'
+import { useArchive } from '../context/ArchiveContext'
 import { fetchAccountDashboardData, fetchAccountHostnameCoverage } from '../services/googleData'
 import { fetchNsAccountDashboardData } from '../services/netstorageData'
 import type { AccountDetail, AccountHostnameCoverage } from '../types/dashboard'
@@ -20,8 +21,7 @@ function hostnameStatusStyles(status: 'covered' | 'not_covered' | 'unknown'): st
 
 export function AccountDetailPage() {
   const { accountId = '' } = useParams()
-  const [searchParams] = useSearchParams()
-  const archive = searchParams.get('archive') ?? ''
+  const { archive } = useArchive()
   const [account, setAccount] = useState<AccountDetail | null>(null)
   const [hostnameCoverage, setHostnameCoverage] = useState<AccountHostnameCoverage | null>(null)
   const [isLoading, setIsLoading] = useState(true)

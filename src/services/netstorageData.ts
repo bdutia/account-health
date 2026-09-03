@@ -73,3 +73,22 @@ export async function fetchAccountMapping(): Promise<AccountMappingEntry[]> {
     return []
   }
 }
+
+export interface NsArchiveListResult {
+  data: string[]
+  error?: string
+}
+
+/** Always LIVE: lists archive/<date> folders (NetStorage stat on CPCODE/archive) for the archive picker. */
+export async function fetchNsArchiveList(): Promise<NsArchiveListResult> {
+  try {
+    const response = await fetch(`${API_BASE}/dashboard/ns/archives`)
+    if (!response.ok) {
+      return { data: [], error: `Request failed: ${response.status}` }
+    }
+    const payload = (await response.json()) as NsResponse<string[]>
+    return { data: payload.data ?? [], error: payload.error }
+  } catch (error) {
+    return { data: [], error: String(error) }
+  }
+}

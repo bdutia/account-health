@@ -967,8 +967,13 @@ _NS_ARCHIVE_LIST_CACHE_TTL_SECONDS = 60
 
 
 def list_ns_archive_folders() -> list[str]:
-    """Stat the CPCODE/archive directory on NetStorage and return archive folder names (e.g.
-    "archive/20260901"), newest first. Used to populate the archive(s) dropdown/search widget."""
+    """List the CPCODE/archive directory on NetStorage and return archive folder names (e.g.
+    "archive/20260901"), newest first. Used to populate the archive(s) dropdown/search widget.
+
+    Uses the "dir" action (not "stat"): archive/<date> directories are implicit (inferred from
+    child object paths, with no directory marker object of their own), and NetStorage's "stat"
+    action 404s on implicit directories. "dir" lists a directory's children by prefix and works
+    for implicit directories too."""
     try:
         from akamai.netstorage import Netstorage
     except ImportError as error:
@@ -987,21 +992,21 @@ def list_ns_archive_folders() -> list[str]:
     netstorage = Netstorage(cfg["hostname"], cfg["keyname"], cfg["key"])
 
     try:
-        ok, response = netstorage.stat(remote_dir)
+        ok, response = netstorage.dir(remote_dir)
     except Exception as error:
         raise ValueError(
-            f"NetStorage stat raised an error for {remote_dir!r}: {type(error).__name__}: {error}"
+            f"NetStorage dir raised an error for {remote_dir!r}: {type(error).__name__}: {error}"
         ) from error
 
     status_code = getattr(response, "status_code", None)
     if not ok or status_code != 200:
         reason = getattr(response, "reason", None)
-        raise ValueError(f"NetStorage stat failed for {remote_dir!r}: status={status_code}, reason={reason!r}")
+        raise ValueError(f"NetStorage dir failed for {remote_dir!r}: status={status_code}, reason={reason!r}")
 
     try:
         root = ET.fromstring(response.text)
     except ET.ParseError as error:
-        raise ValueError(f"NetStorage stat returned unparseable XML for {remote_dir!r}: {error}") from error
+        raise ValueError(f"NetStorage dir returned unparseable XML for {remote_dir!r}: {error}") from error
 
     folders = [
         f"{ARCHIVE_ROOT_DIR}/{file_element.get('name')}"

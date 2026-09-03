@@ -1,14 +1,13 @@
 import { useEffect, useState } from 'react'
-import { AccountSearchDropdown } from '../components/AccountSearchDropdown'
 import { AccountsTable } from '../components/AccountsTable'
 import { DashboardLayout } from '../components/DashboardLayout'
 import { MetricTiles } from '../components/MetricTiles'
 import { PanelColumns } from '../components/PanelColumns'
 import { useArchive } from '../context/ArchiveContext'
 import { fetchSummaryDashboardData } from '../services/googleData'
-import { fetchAccountMapping, fetchNsSummaryDashboardData } from '../services/netstorageData'
+import { fetchNsSummaryDashboardData } from '../services/netstorageData'
 import { accounts as mockAccounts, summaryMetrics as mockSummaryMetrics, summaryPanels as mockSummaryPanels } from '../data/mockData'
-import type { AccountMappingEntry, SummaryDashboardData } from '../types/dashboard'
+import type { SummaryDashboardData } from '../types/dashboard'
 
 const INITIAL_DATA: SummaryDashboardData = {
   summaryMetrics: mockSummaryMetrics,
@@ -21,7 +20,6 @@ export function SummaryPage() {
   const [data, setData] = useState<SummaryDashboardData>(INITIAL_DATA)
   const [isLoading, setIsLoading] = useState(true)
   const [dataSourceLabel, setDataSourceLabel] = useState<string | null>(null)
-  const [accountOptions, setAccountOptions] = useState<AccountMappingEntry[]>([])
 
   useEffect(() => {
     let isMounted = true
@@ -58,30 +56,9 @@ export function SummaryPage() {
     }
   }, [archive])
 
-  useEffect(() => {
-    let isMounted = true
-
-    async function loadAccountMapping() {
-      const entries = await fetchAccountMapping()
-      if (isMounted) {
-        setAccountOptions(entries)
-      }
-    }
-
-    void loadAccountMapping()
-
-    return () => {
-      isMounted = false
-    }
-  }, [])
-
   return (
     <DashboardLayout title="Account Health & Growth Dashboard">
       <div className="space-y-6">
-        <section className="mx-auto max-w-xl rounded-2xl border border-slate-200 bg-white p-4 text-center shadow-card">
-          <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-slate-600">Find an Account</h2>
-          <AccountSearchDropdown accounts={accountOptions} archive={archive} />
-        </section>
         {isLoading ? (
           <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm font-semibold text-slate-500 shadow-card">
             Loading dashboard data...

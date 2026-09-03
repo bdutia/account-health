@@ -17,6 +17,7 @@ interface FilterColumnDef {
 }
 
 const FILTER_COLUMNS: FilterColumnDef[] = [
+  { key: 'name', label: 'Account', getValue: (row) => row.name || '(blank)' },
   { key: 'healthScore', label: 'Health Score', getValue: (row) => String(row.healthScore.value) },
   { key: 'renewalRisk', label: 'Renewal Risk', getValue: (row) => row.renewalRisk || '(blank)' },
   { key: 'expansionPotential', label: 'Expansion Potential', getValue: (row) => row.expansionPotential || '(blank)' },
@@ -188,7 +189,6 @@ export function AccountsTable({ rows }: AccountsTableProps) {
         <table className="w-full min-w-[980px] border-collapse text-left">
           <thead>
             <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500">
-              <th className="pb-3 pr-4">Account</th>
               {FILTER_COLUMNS.map((column) => {
                 const isFiltered = (columnFilters[column.key]?.length ?? 0) > 0
                 return (
@@ -204,7 +204,7 @@ export function AccountsTable({ rows }: AccountsTableProps) {
                     {openFilterColumn === column.key ? (
                       <>
                         <div className="fixed inset-0 z-10" onClick={() => setOpenFilterColumn(null)} />
-                        <div className="absolute left-0 top-full z-20 mt-1 max-h-72 w-56 overflow-y-auto rounded-lg border border-slate-300 bg-white p-2 text-xs font-normal normal-case text-slate-700 shadow-lg">
+                        <div className={`absolute left-0 top-full z-20 mt-1 max-h-72 ${column.key === 'name' ? 'w-72' : 'w-56'} overflow-y-auto rounded-lg border border-slate-300 bg-white p-2 text-xs font-normal normal-case text-slate-700 shadow-lg`}>
                           <div className="mb-1 flex items-center justify-between gap-2">
                             <button
                               type="button"
@@ -275,7 +275,7 @@ export function AccountsTable({ rows }: AccountsTableProps) {
             ))}
             {visibleRows.length === 0 ? (
               <tr>
-                <td colSpan={FILTER_COLUMNS.length + 1} className="py-6 text-center text-sm font-semibold text-slate-500">
+                <td colSpan={FILTER_COLUMNS.length} className="py-6 text-center text-sm font-semibold text-slate-500">
                   No accounts match the current filters.
                 </td>
               </tr>

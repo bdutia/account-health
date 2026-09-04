@@ -70,7 +70,7 @@ For live Core Web Vitals lookups used by the perf matrix endpoints, also set in 
 
 For live Grover security-trends lookups used by the security feature charts, also set in `.env.server`:
 
-- `X_API_KEY`
+- `X-API-KEY`
 
 For prefixed cloud hosting (example `/account-health`), set:
 
@@ -142,7 +142,7 @@ The image expects secrets and integration settings at runtime, not at build time
 - `GOOGLE_SERVICE_ACCOUNT_EMAIL`
 - `GOOGLE_PRIVATE_KEY`
 - `CRUX_API_KEY`
-- `X_API_KEY`
+- `X-API-KEY`
 - `NS_HOSTNAME`
 - `NS_KEYNAME`
 - `NS_KEY`

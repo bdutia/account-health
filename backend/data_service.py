@@ -1709,7 +1709,7 @@ def get_crux_config() -> dict[str, str]:
 
 
 def get_grover_config() -> dict[str, str]:
-    return {"api_key": os.getenv("X_API_KEY", "")}
+    return {"api_key": os.getenv("X-API-KEY", "")}
 
 
 def classify_cwv(metric_key: str, value: float | None) -> str | None:
@@ -2414,7 +2414,7 @@ def get_account_security_feature_charts(
     api_key = get_grover_api_key()
     if not api_key:
         job.log(
-            "X_API_KEY is not set in .env.server; the Grover API call will likely fail authentication",
+            "X-API-KEY is not set in .env.server; the Grover API call will likely fail authentication",
             level="warning",
             percent=10,
         )

@@ -505,7 +505,7 @@ bullet_slide(
     [
         "The only page NOT following the Matrix 3-page pattern — a single interactive chart page instead",
         "User picks a start/end date range + account name, then triggers a background job",
-        "Backend calls Grover's security-trends API (api.grover.akamai.com) with an X-API-Key header (X_API_KEY env var)",
+        "Backend calls Grover's security-trends API (api.grover.akamai.com) with an X-API-Key header (X-API-KEY env var)",
         "extract_security_trend_series() normalizes whatever shape the API returns (bare list, or wrapped in data/results/records/trends/series) "
         "into per-dimension time series, auto-detecting the date field from a candidate-key list",
         "Same defensive numeric coercion pattern as CrUX: metric values may arrive as numeric strings",
@@ -762,7 +762,7 @@ table_slide(
         ["NS_HOSTNAME / NS_KEYNAME / NS_KEY / NS_CP_CODE / NS_BASE_PATH", ".env.server", "NetStorage credentials + LIVE base path"],
         ["GOOGLE_SHEETS_SPREADSHEET_ID / GOOGLE_SERVICE_ACCOUNT_EMAIL / GOOGLE_PRIVATE_KEY", ".env.server", "Google Sheets/Docs fallback"],
         ["CRUX_API_KEY", ".env.server", "Chrome UX Report + PageSpeed Insights (perf matrix)"],
-        ["X_API_KEY", ".env.server", "Grover security-trends API"],
+        ["X-API-KEY", ".env.server", "Grover security-trends API"],
         ["EDGE_RC_SECTION / EDGE_RC_PATH / AKAMAI_ACCOUNT_MAP_PATH", ".env.server", "Akamai EdgeGrid auth for hostname coverage"],
     ],
     accent=SLATE_700,
@@ -820,7 +820,7 @@ bullet_slide(
         "(frontend env vars are compile-time, not runtime)",
         "Stage 2 (python:3.12-slim) — pip install -r requirements.txt, copies backend/ source + the built dist/ from stage 1",
         "Final image only contains: Python runtime + backend code + compiled static frontend — no Node/npm in the shipped image",
-        "Runtime configuration is 100% environment variables (APP_BASE_PATH, SERVER_DATA_MODE, NS_*, GOOGLE_*, CRUX_API_KEY, X_API_KEY) — "
+        "Runtime configuration is 100% environment variables (APP_BASE_PATH, SERVER_DATA_MODE, NS_*, GOOGLE_*, CRUX_API_KEY, X-API-KEY) — "
         "no secrets baked into the image, so the same image can be promoted across environments",
         "Container command: python -m uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-4000}",
         "Typical run: docker run --rm -p 4000:4000 --env-file .env.server -e APP_BASE_PATH=/account-health account-health:latest",

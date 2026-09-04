@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { DashboardLayout } from '../components/DashboardLayout'
+import { useArchive } from '../context/ArchiveContext'
 import { fetchPerfMatrixTopNScoreCard, getPerfMatrixTopNDownloadUrl, PERF_MATRIX_TOPN_CSV_FILENAME } from '../services/perfMatrixTopNJobs'
 import type { CsvDataMode, PerfMatrixTopNScoreCardResult } from '../types/dashboard'
 
@@ -25,9 +26,8 @@ function ratingBadge(rating: string | null) {
 
 export function PerfMatrixTopNScoreCardPage() {
   const { accountId = '' } = useParams()
-  const [searchParams] = useSearchParams()
   const dataMode: CsvDataMode = 'csv_data_remote'
-  const [context, setContext] = useState(searchParams.get('context') ?? '')
+  const { archive: context, contextPath } = useArchive()
   const [status, setStatus] = useState<LoadStatus>('idle')
   const [result, setResult] = useState<PerfMatrixTopNScoreCardResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -105,15 +105,15 @@ export function PerfMatrixTopNScoreCardPage() {
               <span className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-semibold text-slate-700">
                 Data Source: Remote (NetStorage)
               </span>
-              <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+              <span className="flex items-center gap-2 text-sm font-semibold text-slate-700">
                 Context (NS base path):
-                <input
-                  className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-normal"
-                  placeholder="e.g. staticSiteContent"
-                  value={context}
-                  onChange={(event) => setContext(event.target.value)}
-                />
-              </label>
+                <span
+                  className="rounded-lg border border-slate-300 bg-slate-100 px-3 py-1.5 text-sm font-normal text-slate-600"
+                  title="Inherited from the Archive(s) selection above"
+                >
+                  {contextPath}
+                </span>
+              </span>
               <span className="text-sm font-semibold text-slate-600">
                 {status === 'loading' ? 'Loading…' : status === 'loaded' ? 'Loaded' : status === 'failed' ? 'Failed' : ''}
               </span>

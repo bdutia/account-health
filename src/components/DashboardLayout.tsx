@@ -1,5 +1,7 @@
 import type { PropsWithChildren } from 'react'
-import { Link, useLocation, useSearchParams } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
+import { ArchiveSearchDropdown } from './ArchiveSearchDropdown'
+import { useArchive } from '../context/ArchiveContext'
 
 interface DashboardLayoutProps extends PropsWithChildren {
   title: string
@@ -9,23 +11,7 @@ interface DashboardLayoutProps extends PropsWithChildren {
 export function DashboardLayout({ title, owner, children }: DashboardLayoutProps) {
   const location = useLocation()
   const isDetail = location.pathname.includes('/account/')
-  const [searchParams, setSearchParams] = useSearchParams()
-  const archiveValue = searchParams.get('archive') ?? ''
-
-  function handleArchiveChange(nextValue: string) {
-    setSearchParams(
-      (previous) => {
-        const params = new URLSearchParams(previous)
-        if (nextValue.trim()) {
-          params.set('archive', nextValue)
-        } else {
-          params.delete('archive')
-        }
-        return params
-      },
-      { replace: true },
-    )
-  }
+  const { archive, setArchive, archiveOptions, isLoadingArchiveOptions } = useArchive()
 
   return (
     <main className="min-h-screen bg-page text-slate-800">
@@ -43,11 +29,11 @@ export function DashboardLayout({ title, owner, children }: DashboardLayoutProps
             </div>
             <label className="flex items-center gap-2 font-semibold text-slate-200">
               Archive(s):
-              <input
-                className="w-56 rounded-md border border-slate-500 bg-slate-50 px-3 py-1 text-slate-800"
-                placeholder="e.g. archive/20260819"
-                value={archiveValue}
-                onChange={(event) => handleArchiveChange(event.target.value)}
+              <ArchiveSearchDropdown
+                value={archive}
+                options={archiveOptions}
+                isLoading={isLoadingArchiveOptions}
+                onChange={setArchive}
               />
             </label>
           </div>

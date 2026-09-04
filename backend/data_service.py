@@ -2,6 +2,7 @@ import csv
 import os
 import json
 import time
+import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -957,6 +958,78 @@ def get_ns_account_mapping() -> dict[str, Any]:
         return {"source": "netstorage-live", "data": entries}
     except Exception as error:
         return {"source": "netstorage-error", "data": [], "error": str(error)}
+
+
+ARCHIVE_ROOT_DIR = "archive"
+
+_NS_ARCHIVE_LIST_CACHE: dict[str, Any] = {"data": None, "loaded_at": 0.0}
+_NS_ARCHIVE_LIST_CACHE_TTL_SECONDS = 60
+
+
+def list_ns_archive_folders() -> list[str]:
+    """List the CPCODE/archive directory on NetStorage and return archive folder names (e.g.
+    "archive/20260901"), newest first. Used to populate the archive(s) dropdown/search widget.
+
+    Uses the "dir" action (not "stat"): archive/<date> directories are implicit (inferred from
+    child object paths, with no directory marker object of their own), and NetStorage's "stat"
+    action 404s on implicit directories. "dir" lists a directory's children by prefix and works
+    for implicit directories too."""
+    try:
+        from akamai.netstorage import Netstorage
+    except ImportError as error:
+        raise ValueError(
+            "NetStorage SDK not installed; install the package that provides 'akamai.netstorage' to list archives"
+        ) from error
+
+    cfg = get_ns_config()
+    missing = [name for name in ("hostname", "keyname", "key") if not cfg[name]]
+    if missing:
+        raise ValueError(
+            f"Missing NetStorage credentials: {', '.join(missing)} (set NS_HOSTNAME/NS_KEYNAME/NS_KEY env vars)"
+        )
+
+    remote_dir = "/" + "/".join(part for part in [cfg["cp_code"], ARCHIVE_ROOT_DIR] if part)
+    netstorage = Netstorage(cfg["hostname"], cfg["keyname"], cfg["key"])
+
+    try:
+        ok, response = netstorage.dir(remote_dir)
+    except Exception as error:
+        raise ValueError(
+            f"NetStorage dir raised an error for {remote_dir!r}: {type(error).__name__}: {error}"
+        ) from error
+
+    status_code = getattr(response, "status_code", None)
+    if not ok or status_code != 200:
+        reason = getattr(response, "reason", None)
+        raise ValueError(f"NetStorage dir failed for {remote_dir!r}: status={status_code}, reason={reason!r}")
+
+    try:
+        root = ET.fromstring(response.text)
+    except ET.ParseError as error:
+        raise ValueError(f"NetStorage dir returned unparseable XML for {remote_dir!r}: {error}") from error
+
+    folders = [
+        f"{ARCHIVE_ROOT_DIR}/{file_element.get('name')}"
+        for file_element in root.findall("file")
+        if file_element.get("type") == "dir" and file_element.get("name")
+    ]
+    return sorted(folders, reverse=True)
+
+
+def get_ns_archive_list() -> dict[str, Any]:
+    """Cached (60s) list of archive/<date> folders for the archive picker UI, always LIVE from NetStorage."""
+    now = time.time()
+    cached = _NS_ARCHIVE_LIST_CACHE["data"]
+    if cached is not None and (now - _NS_ARCHIVE_LIST_CACHE["loaded_at"]) < _NS_ARCHIVE_LIST_CACHE_TTL_SECONDS:
+        return {"source": "netstorage-live", "data": cached}
+
+    try:
+        folders = list_ns_archive_folders()
+        _NS_ARCHIVE_LIST_CACHE["data"] = folders
+        _NS_ARCHIVE_LIST_CACHE["loaded_at"] = now
+        return {"source": "netstorage-live", "data": folders}
+    except Exception as error:
+        return {"source": "netstorage-error", "data": cached or [], "error": str(error)}
 
 
 def get_ns_account_dashboard_data(account_key: str, context: str | None = None) -> dict[str, Any]:

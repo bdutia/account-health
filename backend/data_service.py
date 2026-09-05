@@ -90,8 +90,8 @@ def load_account_id_map() -> dict[str, dict[str, str]]:
     """Universal account map keyed by csvAccountDir, used to validate account presence and to
     resolve per-account NetStorage report paths.
 
-    Tries the LIVE NetStorage account_mapping.json (NSCPCODE/staticSiteContent/allAccounts/
-    account_mapping.json) first, and only falls back to the local backend/account_id_map.json if
+    Tries the LIVE NetStorage master_account_mapping.json (NSCPCODE/staticSiteContent/grover/
+    master_account_mapping.json) first, and only falls back to the local backend/account_id_map.json if
     that remote fetch fails or yields no valid entries. Results are cached briefly to avoid
     re-downloading the mapping file multiple times within the same request."""
     now = time.time()
@@ -102,10 +102,10 @@ def load_account_id_map() -> dict[str, dict[str, str]]:
     try:
         payload = download_ns_json(ACCOUNT_MAPPING_RELATIVE_PATH, None)
         if not isinstance(payload, dict):
-            raise ValueError("NetStorage account_mapping.json must be a JSON object")
+            raise ValueError("NetStorage master_account_mapping.json must be a JSON object")
         indexed = _index_account_mapping_by_csv_dir(payload)
         if not indexed:
-            raise ValueError("NetStorage account_mapping.json has no valid entries")
+            raise ValueError("NetStorage master_account_mapping.json has no valid entries")
     except Exception:
         indexed = _load_local_account_id_map()
 
@@ -895,7 +895,7 @@ def resolve_report_csv_path(
 
 
 ALL_ACCOUNTS_SUMMARY_RELATIVE_PATH = Path("allAccounts") / "all_accounts_summary.json"
-ACCOUNT_MAPPING_RELATIVE_PATH = Path("allAccounts") / "account_mapping.json"
+ACCOUNT_MAPPING_RELATIVE_PATH = Path("grover") / "master_account_mapping.json"
 
 
 def resolve_ns_remote_path(relative_path: Path, context: str | None = None) -> tuple[str, str]:
@@ -940,7 +940,7 @@ def get_ns_summary_dashboard_data(context: str | None = None) -> dict[str, Any]:
 
 
 def get_ns_account_mapping() -> dict[str, Any]:
-    """Fetch account_mapping.json from the LIVE NetStorage location, used to populate the account search widget."""
+    """Fetch Grover's master_account_mapping.json from LIVE NetStorage for the account search widget."""
     try:
         payload = download_ns_json(ACCOUNT_MAPPING_RELATIVE_PATH, None)
         entries: list[dict[str, str]] = []

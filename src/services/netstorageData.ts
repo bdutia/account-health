@@ -60,7 +60,7 @@ export async function fetchNsAccountDashboardData(
   }
 }
 
-/** Always LIVE: populates the account search/dropdown widget from account_mapping.json. */
+/** Always LIVE: populates the account search/dropdown widget from Grover's master_account_mapping.json. */
 export async function fetchAccountMapping(): Promise<AccountMappingEntry[]> {
   try {
     const response = await fetch(`${API_BASE}/dashboard/ns/account-mapping`)

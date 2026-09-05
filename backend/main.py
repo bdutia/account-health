@@ -91,7 +91,7 @@ def ns_summary_dashboard(context: str | None = Query(None)) -> dict[str, object]
 
 @app.get(f'{API_PREFIX}/dashboard/ns/account-mapping')
 def ns_account_mapping() -> dict[str, object]:
-    """Always LIVE: NSCPCODE/staticSiteContent/allAccounts/account_mapping.json, used for the account search widget."""
+    """Always LIVE: NSCPCODE/staticSiteContent/grover/master_account_mapping.json, used for the account search widget."""
     return get_ns_account_mapping()
 
 

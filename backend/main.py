@@ -45,7 +45,7 @@ from backend.data_service import (
 )
 from backend.job_manager import Job, job_manager
 
-load_dotenv('.env.server')
+load_dotenv(Path(__file__).resolve().parents[1] / '.env.server')
 
 app = FastAPI(title='Account Health API')
 frontend_origin = os.getenv('FRONTEND_ORIGIN', 'http://localhost:5173')

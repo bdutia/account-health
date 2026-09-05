@@ -45,7 +45,10 @@ from backend.data_service import (
 )
 from backend.job_manager import Job, job_manager
 
-load_dotenv(Path(__file__).resolve().parents[1] / '.env.server')
+# Load local development configuration regardless of the Uvicorn working directory.
+# Docker/runtime-injected environment variables take precedence.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(PROJECT_ROOT / ".env.server", override=False)
 
 app = FastAPI(title='Account Health API')
 frontend_origin = os.getenv('FRONTEND_ORIGIN', 'http://localhost:5173')

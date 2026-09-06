@@ -1708,9 +1708,49 @@ def get_crux_config() -> dict[str, str]:
     return {"api_key": os.getenv("CRUX_API_KEY", "")}
 
 
-def get_grover_config() -> dict[str, str]:
-    api_key = os.getenv("X-API-KEY")
-    return {"api_key": api_key.strip() if api_key else ""}
+# Fallback location for the Grover API key when X-API-KEY isn't set in the environment:
+# CPCODE/nsenvs/groverapi.json on NetStorage, field "grover-api-key".
+GROVER_API_KEY_NS_RELATIVE_PATH = Path("nsenvs") / "groverapi.json"
+
+# Cached once per process so we don't re-download the NetStorage file on every Grover call.
+_grover_api_key_ns_cache: str | None = None
+
+
+def fetch_grover_api_key_from_netstorage(job: Job | None = None) -> str:
+    """Download CPCODE/nsenvs/groverapi.json from NetStorage and return its "grover-api-key" value."""
+    global _grover_api_key_ns_cache
+    if _grover_api_key_ns_cache is not None:
+        return _grover_api_key_ns_cache
+
+    cfg = get_ns_config()
+    remote_path = "/" + "/".join(
+        part for part in [cfg["cp_code"], *GROVER_API_KEY_NS_RELATIVE_PATH.parts] if part
+    )
+    local_path = get_storage_dir() / "ns_json_cache" / GROVER_API_KEY_NS_RELATIVE_PATH
+
+    download_csv_from_netstorage(remote_path, local_path, job)
+    payload = json.loads(local_path.read_text(encoding="utf-8"))
+    api_key = str(payload.get("grover-api-key") or "").strip()
+    _grover_api_key_ns_cache = api_key
+    return api_key
+
+
+def get_grover_config(job: Job | None = None) -> dict[str, str]:
+    """Resolve the Grover API key: X-API-KEY env var first, falling back to NetStorage
+    (CPCODE/nsenvs/groverapi.json) if the environment doesn't provide it."""
+    api_key = os.getenv("X-API-KEY", "").strip()
+    if api_key:
+        return {"api_key": api_key}
+
+    if job:
+        job.log("X-API-KEY not set in environment; falling back to NetStorage groverapi.json", percent=5)
+    try:
+        api_key = fetch_grover_api_key_from_netstorage(job)
+    except Exception as error:
+        if job:
+            job.log(f"NetStorage fallback for X-API-KEY failed: {error}", level="warning", percent=8)
+        api_key = ""
+    return {"api_key": api_key}
 
 
 def classify_cwv(metric_key: str, value: float | None) -> str | None:
@@ -2345,8 +2385,8 @@ GROVER_SECURITY_TRENDS_URL = "https://api.grover.akamai.com/security-trends/quer
 _SECURITY_TREND_DATE_KEYS = ("date", "day", "timestamp", "period", "ts", "eventDate", "recordDate")
 
 
-def get_grover_api_key() -> str:
-    return get_grover_config()["api_key"]
+def get_grover_api_key(job: Job | None = None) -> str:
+    return get_grover_config(job)["api_key"]
 
 
 @sleep_and_retry
@@ -2412,10 +2452,11 @@ def get_account_security_feature_charts(
     account_metadata = mapping.get(account_key) or {}
     resolved_account_name = account_name.strip() or account_metadata.get("accountName", account_key)
 
-    api_key = get_grover_api_key()
+    api_key = get_grover_api_key(job)
     if not api_key:
         job.log(
-            "X-API-KEY is unavailable to the backend process; check Docker runtime secret/environment injection",
+            "X-API-KEY is unavailable to the backend process (env var not set and NetStorage fallback failed); "
+            "check Docker runtime secret/environment injection or CPCODE/nsenvs/groverapi.json",
             level="warning",
             percent=10,
         )

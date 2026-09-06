@@ -72,6 +72,10 @@ For live Grover security-trends lookups used by the security feature charts, als
 
 - `X-API-KEY`
 
+If `X-API-KEY` is not set in the environment, the backend falls back to downloading
+`NS_CP_CODE/nsenvs/groverapi.json` from NetStorage (using the `NS_HOSTNAME`/`NS_KEYNAME`/`NS_KEY`
+credentials above) and reading its `grover-api-key` field.
+
 For prefixed cloud hosting (example `/account-health`), set:
 
 - `.env`: `VITE_APP_BASE_PATH=/account-health/`

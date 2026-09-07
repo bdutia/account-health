@@ -53,6 +53,9 @@ export function AccountsTable({ rows }: AccountsTableProps) {
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({})
   const [openFilterColumn, setOpenFilterColumn] = useState<string | null>(null)
   const [isSearchOpen, setIsSearchOpen] = useState(false)
+  // True once the user has touched the filter UI (including "Select all"), so we stop
+  // restricting to the random preview even if that interaction leaves nothing filtered out.
+  const [hasInteracted, setHasInteracted] = useState(false)
   const searchContainerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -80,8 +83,6 @@ export function AccountsTable({ rows }: AccountsTableProps) {
     return options
   }, [rows])
 
-  const hasActiveFilters = nameQuery.trim().length > 0 || Object.values(columnFilters).some((values) => values.length > 0)
-
   const filteredRows = useMemo(() => {
     let result = rows
     const query = nameQuery.trim().toLowerCase()
@@ -99,7 +100,7 @@ export function AccountsTable({ rows }: AccountsTableProps) {
     return result
   }, [rows, nameQuery, columnFilters])
 
-  const visibleRows = hasActiveFilters ? filteredRows : randomPreviewRows
+  const visibleRows = hasInteracted ? filteredRows : randomPreviewRows
 
   const searchSuggestions = useMemo(() => {
     const query = nameQuery.trim().toLowerCase()
@@ -110,6 +111,7 @@ export function AccountsTable({ rows }: AccountsTableProps) {
   }, [rows, nameQuery])
 
   function toggleColumnFilterValue(columnKey: string, value: string) {
+    setHasInteracted(true)
     setColumnFilters((previous) => {
       const allValues = columnValueOptions[columnKey] ?? []
       const current = previous[columnKey] ?? allValues
@@ -119,6 +121,7 @@ export function AccountsTable({ rows }: AccountsTableProps) {
   }
 
   function clearColumnFilter(columnKey: string) {
+    setHasInteracted(true)
     setColumnFilters((previous) => {
       const next = { ...previous }
       delete next[columnKey]
@@ -127,6 +130,7 @@ export function AccountsTable({ rows }: AccountsTableProps) {
   }
 
   function clearAllFilters() {
+    setHasInteracted(false)
     setNameQuery('')
     setColumnFilters({})
   }
@@ -143,6 +147,7 @@ export function AccountsTable({ rows }: AccountsTableProps) {
               value={nameQuery}
               onFocus={() => setIsSearchOpen(true)}
               onChange={(event) => {
+                setHasInteracted(true)
                 setNameQuery(event.target.value)
                 setIsSearchOpen(true)
               }}
@@ -169,7 +174,7 @@ export function AccountsTable({ rows }: AccountsTableProps) {
               </div>
             ) : null}
           </div>
-          {hasActiveFilters ? (
+          {hasInteracted ? (
             <button
               type="button"
               onClick={clearAllFilters}
@@ -179,7 +184,7 @@ export function AccountsTable({ rows }: AccountsTableProps) {
             </button>
           ) : null}
           <span className="text-xs font-semibold text-slate-500">
-            {hasActiveFilters
+            {hasInteracted
               ? `${filteredRows.length} of ${rows.length} accounts`
               : `Showing ${visibleRows.length} random of ${rows.length} accounts`}
           </span>

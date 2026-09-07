@@ -38,7 +38,7 @@ from backend.data_service import (
     get_ns_summary_dashboard_data,
     resolve_report_csv_path,
     get_account_report_xlsx_relative_path,
-    CONFIG_SUMMARY_RELATIVE_PATH,
+    CNAME_STATUS_RELATIVE_PATH,
     CONFIG_AUDIT_RELATIVE_PATH,
     HOSTNAME_COVERAGE_RELATIVE_PATH,
     TRAFFIC_REPORT_RELATIVE_PATH,
@@ -220,7 +220,7 @@ def hostname_cname_matrix_summary_json(
 
 @app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/hostMatrix/cname/download')
 def download_hostname_cname_matrix_csv(account_key: str, context: str | None = Query(None)) -> FileResponse:
-    return _download_report_csv(account_key, CONFIG_SUMMARY_RELATIVE_PATH, context)
+    return _download_report_csv(account_key, CNAME_STATUS_RELATIVE_PATH, context)
 
 
 @app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/report/download')

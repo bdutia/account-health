@@ -6,7 +6,7 @@ import type {
 } from '../types/dashboard'
 import { runJobWithRetry } from './sseJobClient'
 
-export const HOST_MATRIX_CNAME_CSV_FILENAME = 'config-summary.csv'
+export const HOST_MATRIX_CNAME_CSV_FILENAME = 'cname-status.csv'
 
 export function getHostnameCnameMatrixDownloadUrl(accountKey: string, context?: string): string {
   const params = new URLSearchParams()

@@ -74,6 +74,11 @@ export async function fetchAccountMapping(): Promise<AccountMappingEntry[]> {
   }
 }
 
+/** LIVE by default; pass an archive context (e.g. "archive/20260819") to download that snapshot's report instead. */
+export function getAccountReportDownloadUrl(accountId: string, archiveContext?: string): string {
+  return `${API_BASE}/dashboard/account/${accountId}/report/download${buildContextQuery(archiveContext)}`
+}
+
 export interface NsArchiveListResult {
   data: string[]
   error?: string

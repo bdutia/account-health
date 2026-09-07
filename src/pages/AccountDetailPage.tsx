@@ -6,7 +6,7 @@ import { MetricTiles } from '../components/MetricTiles'
 import { toneDotStyles, toneTextStyles } from '../components/tone'
 import { useArchive } from '../context/ArchiveContext'
 import { fetchAccountDashboardData, fetchAccountHostnameCoverage } from '../services/googleData'
-import { fetchNsAccountDashboardData } from '../services/netstorageData'
+import { fetchNsAccountDashboardData, getAccountReportDownloadUrl } from '../services/netstorageData'
 import type { AccountDetail, AccountHostnameCoverage } from '../types/dashboard'
 
 function hostnameStatusStyles(status: 'covered' | 'not_covered' | 'unknown'): string {
@@ -94,9 +94,17 @@ export function AccountDetailPage() {
   return (
     <DashboardLayout title={account.name} owner={account.owner}>
       <div className="space-y-6">
-        {dataSourceLabel ? (
-          <p className="text-center text-xs font-semibold text-slate-500">Data source: {dataSourceLabel}</p>
-        ) : null}
+        <p className="flex flex-wrap items-center justify-center gap-2 text-center text-xs font-semibold text-slate-500">
+          {dataSourceLabel ? <span>Data source: {dataSourceLabel}</span> : null}
+          <a
+            className="text-sky-700 underline"
+            href={getAccountReportDownloadUrl(accountId, archive || undefined)}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Download Your Account&apos;s complete Report
+          </a>
+        </p>
         <MetricTiles metrics={account.heroMetrics} />
         <section className="grid gap-4 lg:grid-cols-2">
           <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-card">

@@ -37,6 +37,7 @@ from backend.data_service import (
     get_ns_archive_list,
     get_ns_summary_dashboard_data,
     resolve_report_csv_path,
+    get_account_report_xlsx_relative_path,
     CONFIG_SUMMARY_RELATIVE_PATH,
     CONFIG_AUDIT_RELATIVE_PATH,
     HOSTNAME_COVERAGE_RELATIVE_PATH,
@@ -220,6 +221,25 @@ def hostname_cname_matrix_summary_json(
 @app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/hostMatrix/cname/download')
 def download_hostname_cname_matrix_csv(account_key: str, context: str | None = Query(None)) -> FileResponse:
     return _download_report_csv(account_key, CONFIG_SUMMARY_RELATIVE_PATH, context)
+
+
+@app.get(f'{API_PREFIX}/dashboard/account/{{account_key}}/report/download')
+def download_account_report_xlsx(account_key: str, context: str | None = Query(None)) -> FileResponse:
+    """Always re-download the account's full .xlsx report from NetStorage (no caching)."""
+    try:
+        relative_path = get_account_report_xlsx_relative_path(account_key)
+        report_path = resolve_report_csv_path(account_key, 'csv_data_remote', relative_path, None, context)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error))
+    return FileResponse(
+        report_path,
+        filename=report_path.name,
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
 
 
 @app.post(f'{API_PREFIX}/dashboard/account/{{account_key}}/featureMatrix/jobs')

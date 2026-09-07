@@ -729,6 +729,16 @@ CONFIG_SUMMARY_RELATIVE_PATH = Path("REPORTS") / "CSVDATA" / "config-summary.csv
 CSV_DATA_MODES = {"csv_data_remote"}
 
 
+def get_account_report_xlsx_relative_path(account_key: str) -> Path:
+    """Resolve the account's full .xlsx report path: REPORTS/Account Report - {accountName}.xlsx."""
+    mapping = load_account_id_map()
+    account_metadata = mapping.get(account_key)
+    if not account_metadata:
+        raise ValueError(f"No mapping found for account key: {account_key}")
+    account_name = account_metadata.get("accountName") or account_key
+    return Path("REPORTS") / f"Account Report - {account_name}.xlsx"
+
+
 def get_ns_config() -> dict[str, str]:
     return {
         "hostname": os.getenv("NS_HOSTNAME", ""),

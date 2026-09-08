@@ -65,7 +65,7 @@ export function SummaryPage() {
           </div>
         ) : null}
         {dataSourceLabel ? (
-          <p className="text-center text-xl font-semibold text-slate-500">Data source: {dataSourceLabel}</p>
+          <p className="text-center text-l font-semibold text-slate-500">Data source: {dataSourceLabel}</p>
         ) : null}
         <MetricTiles metrics={data.summaryMetrics} />
         <AccountsTable rows={data.accounts} />

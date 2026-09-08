@@ -94,7 +94,7 @@ export function AccountDetailPage() {
   return (
     <DashboardLayout title={account.name} owner={account.owner}>
       <div className="space-y-6">
-        <p className="flex flex-wrap items-center justify-center gap-2 text-center text-xs font-semibold text-slate-500">
+        <p className="flex flex-wrap items-center justify-center gap-2 text-center text-l font-semibold text-slate-500">
           {dataSourceLabel ? <span>Data source: {dataSourceLabel}</span> : null}
           <a
             className="text-sky-700 underline"
@@ -102,7 +102,7 @@ export function AccountDetailPage() {
             target="_blank"
             rel="noreferrer"
           >
-            Download Your Account&apos;s complete Report
+            Download Your Account&apos;s complete Report Here
           </a>
         </p>
         <MetricTiles metrics={account.heroMetrics} />

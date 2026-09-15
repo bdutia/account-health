@@ -134,7 +134,9 @@ npm run preview
 Build the image:
 
 ```bash
-docker build --build-arg VITE_APP_BASE_PATH=/account-health -t account-health:latest .
+docker build \
+  --build-arg VITE_GOOGLE_OAUTH_CLIENT_ID="$VITE_GOOGLE_OAUTH_CLIENT_ID" \
+  -t account-health:latest .
 ```
 
 Run it locally with backend env vars loaded from `.env.server`:

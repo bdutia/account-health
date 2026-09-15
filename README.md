@@ -76,6 +76,31 @@ If `X-API-KEY` is not set in the environment, the backend falls back to download
 `NS_CP_CODE/nsenvs/groverapi.json` from NetStorage (using the `NS_HOSTNAME`/`NS_KEYNAME`/`NS_KEY`
 credentials above) and reading its `grover-api-key` field.
 
+### AI Chat bot (Gemini + Google Sign-In)
+
+The Account Detail page has a floating AI Chat bot widget that greets the user with highlights from
+the account's NetStorage `Account Report - {accountName}.xlsx`, answers follow-up questions, and lets
+the user upload extra files (xlsx/csv/json/txt) for extra context — all via Google Gemini.
+
+Frontend (`.env`):
+
+- `VITE_GOOGLE_OAUTH_CLIENT_ID` — Google OAuth Web Client ID used to render the Google Sign-In button.
+
+Backend (`.env.server`):
+
+- `GOOGLE_OAUTH_CLIENT_ID` — same Client ID, used to verify the Google ID token audience.
+- `CHATBOT_ALLOWED_EMAIL_DOMAIN` — email domain allowed to sign in (defaults to `akamai.com`).
+- `CHATBOT_SESSION_SECRET` — secret used to sign chat session tokens (set this in production; otherwise
+  a random per-process secret is used and sessions won't survive a restart).
+- `GEMINI_API_KEY` — optional; if unset, the backend falls back to downloading
+  `NS_CP_CODE/staticSiteContent/nsenvs/geminiapi.json` from NetStorage and reading its `GEMINI_API_KEY`
+  field (same NetStorage credentials as everything else, same pattern as the Grover `X-API-KEY` fallback).
+- `GEMINI_MODEL_NAME` — optional, defaults to `gemini-2.0-flash`.
+
+Only Google accounts on the allowed email domain can sign in; the account report and any uploaded
+files are only downloaded/parsed after a verified sign-in. Chat sessions and uploaded file context are
+kept in-memory only (no persistence across backend restarts).
+
 For prefixed cloud hosting (example `/account-health`), set:
 
 - `.env`: `VITE_APP_BASE_PATH=/account-health/`
@@ -152,6 +177,10 @@ The image expects secrets and integration settings at runtime, not at build time
 - `NS_KEY`
 - `NS_CP_CODE`
 - `NS_BASE_PATH`
+- `GOOGLE_OAUTH_CLIENT_ID`
+- `CHATBOT_ALLOWED_EMAIL_DOMAIN`
+- `CHATBOT_SESSION_SECRET`
+- `GEMINI_API_KEY`
 
 Then open:
 

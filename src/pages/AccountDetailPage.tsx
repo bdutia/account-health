@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import { AiChatBot } from '../components/AiChatBot'
 import { DashboardLayout } from '../components/DashboardLayout'
 import { HealthWidgetLink } from '../components/HealthWidgetLink'
 import { MetricTiles } from '../components/MetricTiles'
@@ -371,6 +372,7 @@ export function AccountDetailPage() {
           )}
         </section>
       </div>
+      <AiChatBot accountId={accountId} archive={archive || undefined} />
     </DashboardLayout>
   )
 }

@@ -1,14 +1,16 @@
 import json
 import os
+import re
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from backend import auth_service, chat_service
 from backend.data_service import (
     get_account_hostname_coverage,
     get_account_hostname_cname_matrix,
@@ -38,6 +40,7 @@ from backend.data_service import (
     get_ns_summary_dashboard_data,
     resolve_report_csv_path,
     get_account_report_xlsx_relative_path,
+    get_storage_dir,
     CNAME_STATUS_RELATIVE_PATH,
     CONFIG_AUDIT_RELATIVE_PATH,
     HOSTNAME_COVERAGE_RELATIVE_PATH,
@@ -643,6 +646,121 @@ def stream_security_feature_charts_job(account_key: str, job_id: str) -> Streami
     if not job:
         raise HTTPException(status_code=404, detail='Job not found')
     return _job_event_stream(job)
+
+
+# ---------------------------------------------------------------------------
+# AI Chat bot (Google Sign-In gated, Gemini-powered) — Account Detail page
+# ---------------------------------------------------------------------------
+
+class GoogleAuthRequest(BaseModel):
+    credential: str
+
+
+@app.post(f'{API_PREFIX}/chat/auth/google')
+def chat_auth_google(request: GoogleAuthRequest) -> dict[str, object]:
+    """Verify a Google Identity Services ID token and, if the email belongs to the allowed
+    domain (default akamai.com), issue a short-lived session token for the chat bot APIs."""
+    try:
+        identity = auth_service.verify_google_id_token(request.credential)
+    except auth_service.AuthError as error:
+        raise HTTPException(status_code=401, detail=str(error))
+    token = auth_service.issue_session_token(identity['email'])
+    return {'token': token, 'email': identity['email'], 'name': identity['name']}
+
+
+def _require_chat_email(authorization: str | None = Header(None)) -> str:
+    token = None
+    if authorization and authorization.lower().startswith('bearer '):
+        token = authorization[7:].strip()
+    try:
+        return auth_service.verify_session_token(token)
+    except auth_service.AuthError as error:
+        raise HTTPException(status_code=401, detail=str(error))
+
+
+@app.post(f'{API_PREFIX}/chat/account/{{account_key}}/greeting/jobs')
+def start_chat_greeting_job(
+    account_key: str,
+    sessionId: str = Query(...),
+    context: str | None = Query(None),
+    authorization: str | None = Header(None),
+) -> dict[str, object]:
+    """Kick off a background job that downloads + summarizes the account's NetStorage .xlsx
+    report and asks Gemini for a greeting with highlights/recommendations."""
+    _require_chat_email(authorization)
+    job = job_manager.create()
+    job_manager.run_in_background(
+        job, lambda active_job: chat_service.start_account_greeting(account_key, sessionId, context, active_job)
+    )
+    return {'jobId': job.job_id}
+
+
+@app.get(f'{API_PREFIX}/chat/account/{{account_key}}/greeting/jobs/{{job_id}}/events')
+def stream_chat_greeting_job(
+    account_key: str, job_id: str, token: str | None = Query(None)
+) -> StreamingResponse:
+    # EventSource-style GET streams can't set an Authorization header, so the session token is
+    # accepted as a query param here (server-side signed/expiring token, not the Gemini API key).
+    try:
+        auth_service.verify_session_token(token)
+    except auth_service.AuthError as error:
+        raise HTTPException(status_code=401, detail=str(error))
+    job = job_manager.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail='Job not found')
+    return _job_event_stream(job)
+
+
+class ChatMessageRequest(BaseModel):
+    sessionId: str
+    message: str
+
+
+@app.post(f'{API_PREFIX}/chat/account/{{account_key}}/messages')
+def send_chat_message(
+    account_key: str, request: ChatMessageRequest, authorization: str | None = Header(None)
+) -> dict[str, object]:
+    _require_chat_email(authorization)
+    try:
+        return chat_service.send_message(account_key, request.sessionId, request.message)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error))
+
+
+_SAFE_FILENAME_PATTERN = re.compile(r'[^A-Za-z0-9._-]+')
+
+
+@app.post(f'{API_PREFIX}/chat/account/{{account_key}}/upload')
+def upload_chat_file(
+    account_key: str,
+    sessionId: str = Form(...),
+    file: UploadFile = File(...),
+    authorization: str | None = Header(None),
+) -> dict[str, object]:
+    """Accept a user-uploaded file (xlsx/csv/json/txt), summarize it, and fold it into the
+    session's context so subsequent chat replies can reference it."""
+    _require_chat_email(authorization)
+
+    safe_name = _SAFE_FILENAME_PATTERN.sub('_', Path(file.filename or 'upload').name) or 'upload'
+    safe_session = _SAFE_FILENAME_PATTERN.sub('_', sessionId) or 'session'
+    upload_dir = get_storage_dir() / 'chat_uploads' / safe_session
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    local_path = upload_dir / safe_name
+
+    MAX_UPLOAD_BYTES = 15 * 1024 * 1024
+    contents = file.file.read(MAX_UPLOAD_BYTES + 1)
+    if len(contents) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail='File too large (15MB limit)')
+    local_path.write_bytes(contents)
+
+    try:
+        return chat_service.add_uploaded_file(account_key, sessionId, local_path, safe_name)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error))
 
 
 DIST_DIR = Path(__file__).resolve().parent.parent / 'dist'

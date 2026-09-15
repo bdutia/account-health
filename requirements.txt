@@ -7,5 +7,9 @@ edgegrid-python
 requests
 netstorageapi
 ratelimit
+# AI Chat bot feature (Gemini + Google Sign-In verification + file uploads + xlsx parsing)
+google-genai
+python-multipart
+openpyxl
 # Optional, only needed for ?data=csv_data_remote (Akamai NetStorage downloads):
 # install whichever package provides the `akamai.netstorage` module for your environment

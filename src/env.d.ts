@@ -14,6 +14,7 @@ interface ImportMetaEnv {
   readonly VITE_GOOGLE_SHEETS_ACCOUNT_HIGHLIGHTS_RANGE?: string
   readonly VITE_GOOGLE_SHEETS_ACCOUNT_ACTIONS_RANGE?: string
   readonly VITE_GOOGLE_SHEETS_ACCOUNT_PILLARS_RANGE?: string
+  readonly VITE_GOOGLE_OAUTH_CLIENT_ID?: string
 }
 
 interface ImportMeta {

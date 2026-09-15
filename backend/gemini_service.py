@@ -17,7 +17,7 @@ from backend.data_service import download_csv_from_netstorage, get_ns_config, ge
 from backend.job_manager import Job
 
 GEMINI_API_KEY_NS_RELATIVE_PATH = Path("nsenvs") / "geminiapi.json"
-GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-2.0-flash")
+DEFAULT_GEMINI_MODEL_NAME = "gemini-3.6-flash"
 
 # Cached once per process so we don't re-download the NetStorage file on every chat call.
 _gemini_api_key_ns_cache: str | None = None
@@ -70,7 +70,7 @@ def generate_reply(
             types.Content(role=turn["role"], parts=[types.Part(text=turn["text"])]) for turn in history
         ]
         chat = client.chats.create(
-            model=GEMINI_MODEL_NAME,
+            model=DEFAULT_GEMINI_MODEL_NAME,
             history=chat_history,
             config=types.GenerateContentConfig(system_instruction=system_instruction),
         )

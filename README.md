@@ -95,7 +95,7 @@ Backend (`.env.server`):
 - `GEMINI_API_KEY` — optional; if unset, the backend falls back to downloading
   `NS_CP_CODE/nsenvs/geminiapi.json` from NetStorage and reading its `GEMINI_API_KEY`
   field (same NetStorage credentials as everything else, same pattern as the Grover `X-API-KEY` fallback).
-- `GEMINI_MODEL_NAME` — optional, defaults to `gemini-2.0-flash`.
+- `GEMINI_MODEL_NAME` — optional, defaults to `gemini-3.6-flash`.
 
 Only Google accounts on the allowed email domain can sign in; the account report and any uploaded
 files are only downloaded/parsed after a verified sign-in. Chat sessions and uploaded file context are

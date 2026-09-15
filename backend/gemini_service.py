@@ -18,6 +18,7 @@ from backend.job_manager import Job
 
 GEMINI_API_KEY_NS_RELATIVE_PATH = Path("nsenvs") / "geminiapi.json"
 GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-2.0-flash")
+GEMINI_NS_REMOTE_PATH = "/nsenvs/geminiapi.json"
 
 # Cached once per process so we don't re-download the NetStorage file on every chat call.
 _gemini_api_key_ns_cache: str | None = None

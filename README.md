@@ -93,7 +93,7 @@ Backend (`.env.server`):
 - `CHATBOT_SESSION_SECRET` — secret used to sign chat session tokens (set this in production; otherwise
   a random per-process secret is used and sessions won't survive a restart).
 - `GEMINI_API_KEY` — optional; if unset, the backend falls back to downloading
-  `NS_CP_CODE/staticSiteContent/nsenvs/geminiapi.json` from NetStorage and reading its `GEMINI_API_KEY`
+  `NS_CP_CODE/nsenvs/geminiapi.json` from NetStorage and reading its `GEMINI_API_KEY`
   field (same NetStorage credentials as everything else, same pattern as the Grover `X-API-KEY` fallback).
 - `GEMINI_MODEL_NAME` — optional, defaults to `gemini-2.0-flash`.
 

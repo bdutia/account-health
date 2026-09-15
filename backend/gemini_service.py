@@ -2,7 +2,7 @@
 
 The Gemini API key is never hardcoded or exposed to the frontend. Resolution order:
 1. GEMINI_API_KEY environment variable (Docker/runtime-injected secret), if set.
-2. Fallback: download NS_CP_CODE/staticSiteContent/nsenvs/geminiapi.json from NetStorage
+2. Fallback: download NS_CP_CODE/nsenvs/geminiapi.json from NetStorage
    (same credentials/pattern as the Grover X-API-KEY fallback) and read its "GEMINI_API_KEY" field.
 """
 
@@ -18,21 +18,20 @@ from backend.job_manager import Job
 
 GEMINI_API_KEY_NS_RELATIVE_PATH = Path("nsenvs") / "geminiapi.json"
 GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-2.0-flash")
-GEMINI_NS_REMOTE_PATH = "/nsenvs/geminiapi.json"
 
 # Cached once per process so we don't re-download the NetStorage file on every chat call.
 _gemini_api_key_ns_cache: str | None = None
 
 
 def fetch_gemini_api_key_from_netstorage(job: Job | None = None) -> str:
-    """Download NS_CP_CODE/staticSiteContent/nsenvs/geminiapi.json and return its GEMINI_API_KEY field."""
+    """Download NS_CP_CODE/nsenvs/geminiapi.json and return its GEMINI_API_KEY field."""
     global _gemini_api_key_ns_cache
     if _gemini_api_key_ns_cache is not None:
         return _gemini_api_key_ns_cache
 
     cfg = get_ns_config()
     remote_path = "/" + "/".join(
-        part for part in [cfg["cp_code"], cfg["base_path"], *GEMINI_API_KEY_NS_RELATIVE_PATH.parts] if part
+        part for part in [cfg["cp_code"], *GEMINI_API_KEY_NS_RELATIVE_PATH.parts] if part
     )
     local_path = get_storage_dir() / "ns_json_cache" / GEMINI_API_KEY_NS_RELATIVE_PATH
 
